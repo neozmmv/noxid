@@ -208,7 +208,7 @@ impl Screen {
 /// What the microphone track carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mic {
-    /// The default input device.
+    /// A real input device; which one is chosen separately.
     Device,
     /// A generated tone, for testing without a microphone.
     #[cfg(feature = "test-source")]
@@ -216,9 +216,16 @@ pub enum Mic {
 }
 
 impl Mic {
-    fn source(self) -> AudioSource {
+    /// `device` is an id from [`crate::audio::devices`], or `None` for the
+    /// system default.
+    fn source(self, device: Option<&str>) -> AudioSource {
         match self {
-            Mic::Device => AudioSource::Device(iroh_live::media::audio::capture::Config::default()),
+            Mic::Device => {
+                let mut config = iroh_live::media::audio::capture::Config::default();
+                config.source =
+                    iroh_live::media::audio::capture::Source::Microphone(device.map(str::to_string));
+                AudioSource::Device(config)
+            }
             #[cfg(feature = "test-source")]
             Mic::Test => iroh_live::media::test_source::audio(
                 440.0,
@@ -237,14 +244,9 @@ pub fn share_screen(broadcast: &LocalBroadcast, screen: &Screen, max: Quality) -
         .map_err(|e| anyhow::anyhow!("{e:#}"))
 }
 
-/// Stops the screen share. Subscribers see the video leave the catalog.
-pub fn stop_screen(broadcast: &LocalBroadcast) {
-    broadcast.video().clear();
-}
-
 /// Starts (or restarts) the microphone.
-pub fn set_mic(broadcast: &LocalBroadcast, mic: Mic) {
-    broadcast.audio().set(mic.source());
+pub fn set_mic(broadcast: &LocalBroadcast, mic: Mic, device: Option<&str>) {
+    broadcast.audio().set(mic.source(device));
 }
 
 /// Stops the microphone, which also releases the device.

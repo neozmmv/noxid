@@ -21,6 +21,27 @@ hex = "0.4"
 getrandom = "0.4"
 dirs = "7"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# The same releases moq-audio and iroh-live link, so nothing builds twice:
+# cpal for our own mic meter and the Linux monitor capture, moq-net for media
+# timestamps, n0-future for the PCM stream handed to the publisher.
+cpal = "0.18"
+moq-net = "0.3"
+n0-future = "0.3"
+bytes = "1"
+
+# WASAPI process loopback, for sharing the PC's sound without Noxid's own
+# output in it. Same release moq-video already compiles.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Media_Audio",
+    "Win32_Media_Multimedia",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Threading",
+    "Win32_System_Variant",
+] }
+windows-core = "0.62"
 
 [features]
 # Generated video and audio, so a call can be tested without devices.
@@ -28,3 +49,6 @@ test-source = ["moq-media/test-source"]
 # Linux screen capture through xdg-desktop-portal, which Wayland requires.
 # Links libpipewire-0.3, so it is opt-in.
 pipewire = ["moq-media/pipewire"]
+
+[dev-dependencies]
+anyhow.workspace = true

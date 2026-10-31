@@ -5,6 +5,9 @@ export type Quality = "low" | "mid" | "high";
 
 export type QualityMode = { mode: "auto" } | { mode: "pinned"; quality: Quality };
 
+/** Which of a participant's sounds a volume applies to. */
+export type AudioStream = "voice" | "screen";
+
 export interface MemberView {
   id: string;
   name: string;
@@ -13,13 +16,19 @@ export interface MemberView {
   connected: boolean;
   has_audio: boolean;
   has_video: boolean;
-  level: number;
+  /** Whether their screen share carries the PC's sound. */
+  has_screen_audio: boolean;
   rendition: string | null;
   fps: number;
   width: number;
   height: number;
   rtt_ms: number | null;
   quality: QualityMode;
+  /** How loud we hear them; local to this machine. Gain, 1 = unchanged. */
+  voice_volume: number;
+  voice_muted: boolean;
+  screen_volume: number;
+  screen_muted: boolean;
 }
 
 export interface RoomView {
@@ -42,7 +51,26 @@ export interface Snapshot {
   sharing: boolean;
   max_quality: Quality;
   knocks: KnockView[];
+  /** Chosen devices; null is the system default. */
+  mic_device: string | null;
+  output_device: string | null;
+  screen_audio: boolean;
+  screen_audio_supported: boolean;
 }
+
+export interface AudioDevice {
+  id: string;
+  name: string;
+  default: boolean;
+}
+
+export interface AudioDevices {
+  inputs: AudioDevice[];
+  outputs: AudioDevice[];
+}
+
+/** Voice level per endpoint id, 0 to 1. */
+export type Levels = Record<string, number>;
 
 export type Notice =
   | { kind: "kicked" }

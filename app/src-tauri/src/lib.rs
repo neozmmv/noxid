@@ -8,7 +8,8 @@ use std::path::PathBuf;
 
 use iroh::EndpointId;
 use noxid_core::media::{self, Mic, Quality, Screen};
-use noxid_core::{Node, NodeConfig, QualityMode, Snapshot};
+use noxid_core::audio::AudioDevice;
+use noxid_core::{Node, NodeConfig, QualityMode, Snapshot, Stream};
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager, RunEvent};
 use tokio::sync::watch;
@@ -19,7 +20,18 @@ use tracing::{error, info};
 struct Profile {
     #[serde(default)]
     name: String,
+    #[serde(default)]
+    mic_device: Option<String>,
+    #[serde(default)]
+    output_device: Option<String>,
+    /// `None` until chosen, so the platform default applies.
+    #[serde(default)]
+    screen_audio: Option<bool>,
 }
+
+/// How often voice levels are pushed to the webview for the speaking
+/// indicator. Separate from snapshots so it never redraws anything else.
+const LEVELS_EVERY: std::time::Duration = std::time::Duration::from_millis(100);
 
 fn profile_path() -> Option<PathBuf> {
     noxid_core::identity::state_dir()
@@ -82,13 +94,72 @@ fn frame_socket(state: tauri::State<'_, AppState>) -> frames::FrameServer {
     state.frames.clone()
 }
 
+/// Saves what the user chose, read back from the node so the file always
+/// matches what is in effect.
+fn remember(node: &Node) {
+    let snapshot = node.snapshot();
+    save_profile(&Profile {
+        name: snapshot.name,
+        mic_device: snapshot.mic_device,
+        output_device: snapshot.output_device,
+        screen_audio: Some(snapshot.screen_audio),
+    });
+}
+
 #[tauri::command]
 async fn set_name(state: tauri::State<'_, AppState>, name: String) -> CommandResult<()> {
     let node = node(&state).await?;
     node.set_name(&name);
-    save_profile(&Profile {
-        name: node.snapshot().name,
-    });
+    remember(&node);
+    Ok(())
+}
+
+#[derive(Serialize)]
+struct AudioDevices {
+    inputs: Vec<AudioDevice>,
+    outputs: Vec<AudioDevice>,
+}
+
+#[tauri::command]
+async fn audio_devices() -> CommandResult<AudioDevices> {
+    let (inputs, outputs) = noxid_core::audio::devices().await;
+    Ok(AudioDevices { inputs, outputs })
+}
+
+#[tauri::command]
+async fn set_mic_device(state: tauri::State<'_, AppState>, device: Option<String>) -> CommandResult<()> {
+    let node = node(&state).await?;
+    node.set_mic_device(device);
+    remember(&node);
+    Ok(())
+}
+
+#[tauri::command]
+async fn set_output_device(state: tauri::State<'_, AppState>, device: Option<String>) -> CommandResult<()> {
+    let node = node(&state).await?;
+    node.set_output_device(device).await.map_err(|e| format!("{e:#}"))?;
+    remember(&node);
+    Ok(())
+}
+
+#[tauri::command]
+async fn set_screen_audio(state: tauri::State<'_, AppState>, on: bool) -> CommandResult<()> {
+    let node = node(&state).await?;
+    node.set_screen_audio(on);
+    remember(&node);
+    Ok(())
+}
+
+#[tauri::command]
+async fn set_peer_audio(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    stream: Stream,
+    volume: f32,
+    muted: bool,
+) -> CommandResult<()> {
+    let id: EndpointId = id.parse().map_err(err)?;
+    node(&state).await?.set_peer_audio(id, stream, volume, muted);
     Ok(())
 }
 
@@ -180,8 +251,19 @@ async fn set_peer_quality(
 }
 
 /// Forwards state changes and notices to the webview for as long as the app
-/// runs.
+/// runs, and voice levels on a fast timer of their own.
 fn forward_events(app: tauri::AppHandle, node: Node) {
+    {
+        let app = app.clone();
+        let node = node.clone();
+        tauri::async_runtime::spawn(async move {
+            let mut tick = tokio::time::interval(LEVELS_EVERY);
+            loop {
+                tick.tick().await;
+                let _ = app.emit("levels", node.levels());
+            }
+        });
+    }
     let mut changes = node.changes();
     let mut notices = node.notices();
     tauri::async_runtime::spawn(async move {
@@ -222,13 +304,20 @@ pub fn run() {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let result = async {
+                    let profile = load_profile();
                     let config = NodeConfig {
                         secret_key: noxid_core::identity::load_or_create()?,
-                        name: load_profile().name,
+                        name: profile.name,
                         mic: Mic::Device,
                         start_muted: false,
+                        mic_device: profile.mic_device,
+                        output_device: profile.output_device,
                     };
-                    Node::spawn(config).await
+                    let node = Node::spawn(config).await?;
+                    if let Some(on) = profile.screen_audio {
+                        node.set_screen_audio(on);
+                    }
+                    anyhow::Ok(node)
                 }
                 .await;
                 match result {
@@ -260,6 +349,11 @@ pub fn run() {
             share_screen,
             set_max_quality,
             set_peer_quality,
+            audio_devices,
+            set_mic_device,
+            set_output_device,
+            set_screen_audio,
+            set_peer_audio,
         ])
         .build(tauri::generate_context!())
         .expect("error while building the app");

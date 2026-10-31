@@ -4,7 +4,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  AudioDevices,
+  AudioStream,
   DisplayInfo,
+  Levels,
   Frame,
   FrameSocket,
   Notice,
@@ -27,6 +30,12 @@ export const api = {
   shareScreen: (display: string | null) => invoke<void>("share_screen", { display }),
   setMaxQuality: (quality: Quality) => invoke<void>("set_max_quality", { quality }),
   setPeerQuality: (id: string, mode: QualityMode) => invoke<void>("set_peer_quality", { id, mode }),
+  audioDevices: () => invoke<AudioDevices>("audio_devices"),
+  setMicDevice: (device: string | null) => invoke<void>("set_mic_device", { device }),
+  setOutputDevice: (device: string | null) => invoke<void>("set_output_device", { device }),
+  setScreenAudio: (on: boolean) => invoke<void>("set_screen_audio", { on }),
+  setPeerAudio: (id: string, stream: AudioStream, volume: number, muted: boolean) =>
+    invoke<void>("set_peer_audio", { id, stream, volume, muted }),
 };
 
 export const onSnapshot = (handler: (s: Snapshot) => void): Promise<UnlistenFn> =>
@@ -34,6 +43,9 @@ export const onSnapshot = (handler: (s: Snapshot) => void): Promise<UnlistenFn> 
 
 export const onNotice = (handler: (n: Notice) => void): Promise<UnlistenFn> =>
   listen<Notice>("notice", (e) => handler(e.payload));
+
+export const onLevels = (handler: (l: Levels) => void): Promise<UnlistenFn> =>
+  listen<Levels>("levels", (e) => handler(e.payload));
 
 // Frame socket. Every message is one frame: a 44-byte header (endpoint id,
 // width, height, colour space) and the I420 planes.

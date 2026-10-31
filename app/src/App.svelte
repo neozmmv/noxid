@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, onSnapshot, onNotice, connectFrames } from "./lib/api";
+  import { api, onSnapshot, onNotice, onLevels, connectFrames } from "./lib/api";
+  import { voice } from "./lib/levels.svelte";
   import type { Notice, Snapshot } from "./lib/types";
   import Lobby from "./lib/Lobby.svelte";
   import Room from "./lib/Room.svelte";
@@ -26,7 +27,11 @@
   }
 
   onMount(() => {
-    const unlisten = [onSnapshot((s) => (snapshot = s)), onNotice(showNotice)];
+    const unlisten = [
+      onSnapshot((s) => (snapshot = s)),
+      onNotice(showNotice),
+      onLevels((l) => (voice.levels = l)),
+    ];
     api
       .snapshot()
       .then((s) => (snapshot = s))

@@ -8,7 +8,7 @@ use std::time::Duration;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use noxid_core::media::{self, Mic, Screen};
-use noxid_core::{Node, NodeConfig, Notice, QualityMode, Snapshot};
+use noxid_core::{Node, NodeConfig, Notice, QualityMode, Snapshot, Stream};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 #[derive(Parser)]
@@ -60,6 +60,11 @@ commands:
   unshare                   stop sharing
   max <low|mid|high>        cap what you share
   quality <who> <auto|low|mid|high>   how to receive someone's share
+  devices                   list microphones and outputs
+  input <id|default>        pick the microphone
+  output <id|default>       pick where others are heard
+  pcsound <on|off>          include the PC's sound when sharing
+  volume <who> <voice|screen> <0-200> [muted]   how loud you hear someone
   status                    print the room
   quit";
 
@@ -81,7 +86,7 @@ async fn main() -> Result<()> {
 
 async fn probe(id: iroh::EndpointId) -> Result<()> {
     let live = iroh_live::Live::from_env().await?.spawn();
-    let path = noxid_core::broadcast_path(&id);
+    let path = noxid_core::voice_path(&id);
     let result = tokio::time::timeout(Duration::from_secs(15), live.subscribe(id, &path)).await;
     match result {
         Ok(Ok(_)) => println!("PROBE: subscribed; the gate let a non-member in"),
@@ -112,6 +117,8 @@ async fn call(name: String, test_mic: bool, muted: bool, stats: bool) -> Result<
         name,
         mic: if test_mic { Mic::Test } else { Mic::Device },
         start_muted: muted,
+        mic_device: None,
+        output_device: None,
     })
     .await?;
     println!("node {} ready; type `help`", node.id());
@@ -155,7 +162,7 @@ async fn call(name: String, test_mic: bool, muted: bool, stats: bool) -> Result<
         // Rosters and knocks are printed when they change; per-peer stats only
         // with --stats, or the terminal would scroll every second.
         let snapshot = node.snapshot();
-        let summary = render(&snapshot, stats);
+        let summary = render(&snapshot, stats, &node.levels());
         if summary != last_printed {
             println!("{summary}");
             last_printed = summary;
@@ -208,10 +215,45 @@ async fn run_command(node: &Node, line: &str) -> Result<()> {
             };
             node.set_peer_quality(member_id(node, who)?.parse()?, mode);
         }
-        "status" => println!("{}", render(&node.snapshot(), true)),
+        "status" => println!("{}", render(&node.snapshot(), true, &node.levels())),
+        "devices" => {
+            let (inputs, outputs) = noxid_core::audio::devices().await;
+            println!("microphones:");
+            for d in inputs {
+                println!("  {}{}
+    id: {}", d.name, if d.default { " (default)" } else { "" }, d.id);
+            }
+            println!("outputs:");
+            for d in outputs {
+                println!("  {}{}
+    id: {}", d.name, if d.default { " (default)" } else { "" }, d.id);
+            }
+        }
+        "input" => node.set_mic_device(device_arg(rest)),
+        "output" => node.set_output_device(device_arg(rest)).await?,
+        "pcsound" => node.set_screen_audio(rest == "on"),
+        "volume" => {
+            let mut parts = rest.split_whitespace();
+            let (Some(who), Some(stream), Some(percent)) = (parts.next(), parts.next(), parts.next()) else {
+                anyhow::bail!("usage: volume <who> <voice|screen> <0-200> [muted]");
+            };
+            let stream = match stream {
+                "voice" => Stream::Voice,
+                "screen" => Stream::Screen,
+                other => anyhow::bail!("{other:?} is neither voice nor screen"),
+            };
+            let volume = percent.parse::<f32>()? / 100.0;
+            let muted = parts.next() == Some("muted");
+            node.set_peer_audio(member_id(node, who)?.parse()?, stream, volume, muted);
+        }
         other => println!("unknown command {other:?}; type `help`"),
     }
     Ok(())
+}
+
+/// `default` (or nothing) means the system default device.
+fn device_arg(arg: &str) -> Option<String> {
+    (!arg.is_empty() && arg != "default").then(|| arg.to_string())
 }
 
 /// Resolves a knocker by id, short id or name.
@@ -237,7 +279,7 @@ fn member_id(node: &Node, query: &str) -> Result<String> {
         .ok_or_else(|| anyhow::anyhow!("nobody matching {query:?} is in the room"))
 }
 
-fn render(s: &Snapshot, stats: bool) -> String {
+fn render(s: &Snapshot, stats: bool, levels: &std::collections::HashMap<String, f32>) -> String {
     let mut out = String::new();
     let me = format!(
         "[{}] mic {}, sharing {}",
@@ -269,12 +311,14 @@ fn render(s: &Snapshot, stats: bool) -> String {
             line.push_str(" connecting...");
         } else {
             line.push_str(&format!(
-                " {} | {}",
+                " {} | {}{}",
                 if m.peer.has_audio { "audio" } else { "muted" },
                 if m.peer.has_video { "sharing" } else { "not sharing" },
+                if m.peer.has_screen_audio { " with sound" } else { "" },
             ));
             if stats {
-                let bars = (m.peer.level * 10.0).round() as usize;
+                let level = levels.get(&m.id).copied().unwrap_or(0.0);
+                let bars = (level * 10.0).round() as usize;
                 line.push_str(&format!(" | level {:<10}", "#".repeat(bars)));
                 if let Some(r) = &m.peer.rendition {
                     line.push_str(&format!(

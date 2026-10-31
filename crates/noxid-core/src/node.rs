@@ -20,6 +20,7 @@ use tokio::sync::{broadcast, oneshot, watch};
 use tracing::{info, warn};
 
 use crate::admin::{self, ADMIN_ALPN, AdminHandler};
+use crate::audio::{self, MicMeter, SystemAudio};
 use crate::gate::MemberGate;
 use crate::media::{self, Mic, Quality, Screen};
 use crate::room::{self, Code, Member, Room};
@@ -32,6 +33,9 @@ const ONLINE_TIMEOUT: Duration = Duration::from_secs(10);
 /// can knock, so this bounds what they can make the coordinator hold open.
 const MAX_PENDING_KNOCKS: usize = 8;
 
+/// The loudest a participant can be turned up, as a gain.
+pub const MAX_VOLUME: f32 = 2.0;
+
 /// How the receiver picks a participant's screen share rendition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(tag = "mode", content = "quality", rename_all = "lowercase")]
@@ -41,6 +45,44 @@ pub enum QualityMode {
     Auto,
     /// Hold one rendition whatever the link does.
     Pinned(Quality),
+}
+
+/// Which of a participant's sounds a volume applies to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Stream {
+    Voice,
+    Screen,
+}
+
+/// How loud we hear one participant. Local to this node: nobody else is told.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct PeerAudio {
+    pub voice_volume: f32,
+    pub voice_muted: bool,
+    pub screen_volume: f32,
+    pub screen_muted: bool,
+}
+
+impl Default for PeerAudio {
+    fn default() -> Self {
+        Self {
+            voice_volume: 1.0,
+            voice_muted: false,
+            screen_volume: 1.0,
+            screen_muted: false,
+        }
+    }
+}
+
+impl PeerAudio {
+    pub fn voice_gain(&self) -> f32 {
+        if self.voice_muted { 0.0 } else { self.voice_volume }
+    }
+
+    pub fn screen_gain(&self) -> f32 {
+        if self.screen_muted { 0.0 } else { self.screen_volume }
+    }
 }
 
 /// Everything a frontend shows, in one serializable value.
@@ -54,6 +96,12 @@ pub struct Snapshot {
     pub max_quality: Quality,
     /// People waiting at the door. Only ever non-empty on the coordinator.
     pub knocks: Vec<KnockView>,
+    /// Chosen devices, `None` meaning the system default.
+    pub mic_device: Option<String>,
+    pub output_device: Option<String>,
+    /// Whether a share includes the PC's sound.
+    pub screen_audio: bool,
+    pub screen_audio_supported: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -74,6 +122,8 @@ pub struct MemberView {
     pub is_coordinator: bool,
     #[serde(flatten)]
     pub peer: PeerView,
+    #[serde(flatten)]
+    pub audio: PeerAudio,
 }
 
 /// What the mesh knows about one remote participant.
@@ -82,8 +132,8 @@ pub struct PeerView {
     pub connected: bool,
     pub has_audio: bool,
     pub has_video: bool,
-    /// Recent audio peak in `0.0..=1.0`, for a speaking indicator.
-    pub level: f32,
+    /// Whether their share carries the PC's sound.
+    pub has_screen_audio: bool,
     pub rendition: Option<String>,
     pub fps: u32,
     pub width: u32,
@@ -115,6 +165,8 @@ pub struct NodeConfig {
     pub name: String,
     pub mic: Mic,
     pub start_muted: bool,
+    pub mic_device: Option<String>,
+    pub output_device: Option<String>,
 }
 
 /// Someone waiting at the door, and the way to answer them.
@@ -124,11 +176,18 @@ pub(crate) struct PendingKnock {
 }
 
 /// The local half of the call: what we publish.
-#[derive(Default)]
 struct Local {
-    broadcast: Option<LocalBroadcast>,
+    /// Our voice. Exists while we are in a room.
+    voice: Option<LocalBroadcast>,
+    /// Our screen share. Exists while we share.
+    screen_broadcast: Option<LocalBroadcast>,
     mic_on: bool,
+    mic_device: Option<String>,
+    output_device: Option<String>,
     screen: Option<Screen>,
+    screen_audio: bool,
+    /// Measures our own voice while the mic is on in a room.
+    meter: Option<MicMeter>,
 }
 
 pub(crate) struct Inner {
@@ -142,10 +201,16 @@ pub(crate) struct Inner {
     pub knocks: Mutex<HashMap<String, PendingKnock>>,
     /// Filled in by the mesh, read when building snapshots.
     pub peers: Mutex<HashMap<EndpointId, PeerView>>,
+    /// Each participant's latest voice level, refreshed fast for the speaking
+    /// indicator. Kept out of the snapshot so it can update without a redraw of
+    /// everything else.
+    pub levels: Mutex<HashMap<EndpointId, f32>>,
     /// Decoded screen share frames per participant, for a renderer.
     pub tiles: Mutex<HashMap<EndpointId, Arc<FrameReceiver<Frame>>>>,
     /// Receiver-side rendition choice per participant.
     pub quality_modes: Mutex<HashMap<EndpointId, QualityMode>>,
+    /// How loud we hear each participant.
+    pub audio_prefs: Mutex<HashMap<EndpointId, PeerAudio>>,
     /// The current roster's ids, which the mesh follows.
     pub roster_tx: watch::Sender<Vec<EndpointId>>,
     /// Bumped on every change, so a frontend knows to read a new snapshot.
@@ -169,6 +234,14 @@ impl Node {
         let id = endpoint.id();
         info!(%id, "endpoint bound");
 
+        // Open the output on the chosen device before anything plays, so the
+        // first voice does not start on the default and then jump.
+        if config.output_device.is_some()
+            && let Err(e) = audio::set_output(config.output_device.clone()).await
+        {
+            warn!("could not open the chosen output device, using the default: {e:#}");
+        }
+
         let live = Live::builder(endpoint.clone()).spawn();
         let (roster_tx, roster_rx) = watch::channel(Vec::new());
         let inner = Arc::new(Inner {
@@ -178,14 +251,22 @@ impl Node {
             name: Mutex::new(room::display_name(&config.name, &id.to_string())),
             room: Mutex::new(Room::default()),
             local: Mutex::new(Local {
+                voice: None,
+                screen_broadcast: None,
                 mic_on: !config.start_muted,
-                ..Default::default()
+                mic_device: config.mic_device,
+                output_device: config.output_device,
+                screen: None,
+                screen_audio: audio::system_audio_supported(),
+                meter: None,
             }),
             max_quality: Mutex::new(Quality::High),
             knocks: Mutex::new(HashMap::new()),
             peers: Mutex::new(HashMap::new()),
+            levels: Mutex::new(HashMap::new()),
             tiles: Mutex::new(HashMap::new()),
             quality_modes: Mutex::new(HashMap::new()),
+            audio_prefs: Mutex::new(HashMap::new()),
             roster_tx,
             changed: watch::channel(0).0,
             notices: broadcast::channel(16).0,
@@ -240,6 +321,23 @@ impl Node {
 
     pub fn snapshot(&self) -> Snapshot {
         self.inner.snapshot()
+    }
+
+    /// Voice levels in `0.0..=1.0` by endpoint id, ours included while the mic
+    /// is on. Cheap enough to poll several times a second.
+    pub fn levels(&self) -> HashMap<String, f32> {
+        let mut levels: HashMap<String, f32> = self
+            .inner
+            .levels
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(id, level)| (id.to_string(), *level))
+            .collect();
+        if let Some(meter) = &self.inner.local.lock().unwrap().meter {
+            levels.insert(self.id().to_string(), meter.level());
+        }
+        levels
     }
 
     pub fn set_name(&self, name: &str) {
@@ -326,7 +424,7 @@ impl Node {
                 .into_iter()
                 .filter(|id| *id != self.id())
                 .map(|id| admin::notify_closed(endpoint.clone(), id));
-            futures_join_all(notices).await;
+            join_all(notices).await;
         } else if let Some(coordinator) = coordinator.and_then(|c| c.parse().ok())
             && let Err(e) = admin::notify_leave(endpoint, coordinator).await
         {
@@ -375,30 +473,53 @@ impl Node {
     pub fn set_mic(&self, on: bool) {
         let mut local = self.inner.local.lock().unwrap();
         local.mic_on = on;
-        if let Some(broadcast) = &local.broadcast {
-            match on {
-                true => media::set_mic(broadcast, self.inner.mic),
-                false => media::mute_mic(broadcast),
-            }
-        }
+        self.inner.apply_mic(&mut local);
         drop(local);
         self.inner.bump();
     }
 
+    /// Chooses the microphone (`None` for the system default), switching to it
+    /// at once if it is live.
+    pub fn set_mic_device(&self, device: Option<String>) {
+        let mut local = self.inner.local.lock().unwrap();
+        local.mic_device = device;
+        self.inner.apply_mic(&mut local);
+        drop(local);
+        self.inner.bump();
+    }
+
+    /// Chooses where everyone is heard (`None` for the system default).
+    pub async fn set_output_device(&self, device: Option<String>) -> Result<()> {
+        audio::set_output(device.clone()).await?;
+        self.inner.local.lock().unwrap().output_device = device;
+        self.inner.bump();
+        Ok(())
+    }
+
     /// Starts sharing `screen`, or stops sharing with `None`.
     pub fn share_screen(&self, screen: Option<Screen>) -> Result<()> {
-        let max = *self.inner.max_quality.lock().unwrap();
         let mut local = self.inner.local.lock().unwrap();
         local.screen = screen;
-        if let Some(broadcast) = &local.broadcast {
-            match &local.screen {
-                Some(screen) => media::share_screen(broadcast, screen, max)?,
-                None => media::stop_screen(broadcast),
-            }
+        let result = if local.voice.is_some() {
+            self.inner.apply_screen(&mut local)
+        } else {
+            Ok(())
+        };
+        drop(local);
+        self.inner.bump();
+        result
+    }
+
+    /// Whether a share carries the PC's sound. Applies to a share in progress
+    /// immediately.
+    pub fn set_screen_audio(&self, on: bool) {
+        let mut local = self.inner.local.lock().unwrap();
+        local.screen_audio = on && audio::system_audio_supported();
+        if let Some(broadcast) = &local.screen_broadcast {
+            self.inner.apply_screen_audio(broadcast, local.screen_audio);
         }
         drop(local);
         self.inner.bump();
-        Ok(())
     }
 
     /// Caps what this node publishes. Restarts a share in progress, since the
@@ -406,7 +527,7 @@ impl Node {
     pub fn set_max_quality(&self, max: Quality) -> Result<()> {
         *self.inner.max_quality.lock().unwrap() = max;
         let local = self.inner.local.lock().unwrap();
-        if let (Some(broadcast), Some(screen)) = (&local.broadcast, &local.screen) {
+        if let (Some(broadcast), Some(screen)) = (&local.screen_broadcast, &local.screen) {
             media::share_screen(broadcast, screen, max)?;
         }
         drop(local);
@@ -417,6 +538,26 @@ impl Node {
     /// Chooses how a participant's screen share is received.
     pub fn set_peer_quality(&self, id: EndpointId, mode: QualityMode) {
         self.inner.quality_modes.lock().unwrap().insert(id, mode);
+        self.inner.bump();
+    }
+
+    /// Sets how loud we hear one of a participant's sounds. `volume` is a gain
+    /// clamped to `0.0..=MAX_VOLUME`; muting keeps the volume for unmuting.
+    pub fn set_peer_audio(&self, id: EndpointId, stream: Stream, volume: f32, muted: bool) {
+        let volume = volume.clamp(0.0, MAX_VOLUME);
+        let mut prefs = self.inner.audio_prefs.lock().unwrap();
+        let entry = prefs.entry(id).or_default();
+        match stream {
+            Stream::Voice => {
+                entry.voice_volume = volume;
+                entry.voice_muted = muted;
+            }
+            Stream::Screen => {
+                entry.screen_volume = volume;
+                entry.screen_muted = muted;
+            }
+        }
+        drop(prefs);
         self.inner.bump();
     }
 
@@ -431,7 +572,7 @@ impl Node {
             .local
             .lock()
             .unwrap()
-            .broadcast
+            .screen_broadcast
             .as_ref()
             .and_then(|b| b.preview())
     }
@@ -444,7 +585,7 @@ impl Node {
 
 /// Runs futures concurrently and waits for all of them, without pulling in a
 /// futures crate for one call site.
-async fn futures_join_all<F: std::future::Future<Output = ()> + Send + 'static>(
+async fn join_all<F: std::future::Future<Output = ()> + Send + 'static>(
     futures: impl IntoIterator<Item = F>,
 ) {
     let mut set = tokio::task::JoinSet::new();
@@ -452,6 +593,12 @@ async fn futures_join_all<F: std::future::Future<Output = ()> + Send + 'static>(
         set.spawn(f);
     }
     while set.join_next().await.is_some() {}
+}
+
+/// Ends a broadcast off the caller's thread: subscribers see a clean close
+/// rather than a dropped one.
+fn finish_later(broadcast: LocalBroadcast) {
+    tokio::spawn(async move { broadcast.finish().await });
 }
 
 impl Inner {
@@ -486,34 +633,91 @@ impl Inner {
         self.bump();
     }
 
-    /// Starts publishing our broadcast for the room just entered.
+    /// Starts publishing for the room just entered: our voice, and a share if
+    /// one was chosen before.
     fn start_local(&self) -> Result<()> {
-        let path = crate::broadcast_path(&self.own_id());
-        let max = *self.max_quality.lock().unwrap();
+        let path = crate::voice_path(&self.own_id());
         let mut local = self.local.lock().unwrap();
+        let voice = self
+            .live
+            .publish(path)
+            .map_err(|e| anyhow::anyhow!("{e:#}"))?;
+        local.voice = Some(voice);
+        self.apply_mic(&mut local);
+        self.apply_screen(&mut local)
+    }
+
+    /// Makes the published mic and the meter match `local`.
+    fn apply_mic(&self, local: &mut Local) {
+        let Some(voice) = &local.voice else {
+            local.meter = None;
+            return;
+        };
+        if local.mic_on {
+            media::set_mic(voice, self.mic, local.mic_device.as_deref());
+            // The meter is a second reader of the same mic; a device that
+            // refuses one costs only the indicator.
+            local.meter = match self.mic {
+                Mic::Device => MicMeter::start(local.mic_device.as_deref())
+                    .inspect_err(|e| warn!("mic level meter unavailable: {e:#}"))
+                    .ok(),
+                #[cfg(feature = "test-source")]
+                Mic::Test => None,
+            };
+        } else {
+            media::mute_mic(voice);
+            local.meter = None;
+        }
+    }
+
+    /// Makes the screen broadcast match `local.screen`: started, restarted on
+    /// another screen, or ended.
+    fn apply_screen(&self, local: &mut Local) -> Result<()> {
+        if let Some(previous) = local.screen_broadcast.take() {
+            finish_later(previous);
+        }
+        let Some(screen) = local.screen.clone() else {
+            return Ok(());
+        };
+        let path = crate::screen_path(&self.own_id());
         let broadcast = self
             .live
             .publish(path)
             .map_err(|e| anyhow::anyhow!("{e:#}"))?;
-        if local.mic_on {
-            media::set_mic(&broadcast, self.mic);
-        }
-        if let Some(screen) = &local.screen {
-            media::share_screen(&broadcast, screen, max)?;
-        }
-        local.broadcast = Some(broadcast);
+        let max = *self.max_quality.lock().unwrap();
+        media::share_screen(&broadcast, &screen, max)?;
+        self.apply_screen_audio(&broadcast, local.screen_audio);
+        local.screen_broadcast = Some(broadcast);
         Ok(())
+    }
+
+    /// Adds or removes the PC's sound on a share. A failure costs the sound,
+    /// never the picture, and is reported once.
+    fn apply_screen_audio(&self, broadcast: &LocalBroadcast, on: bool) {
+        if !on {
+            broadcast.audio().clear();
+            return;
+        }
+        let clock = *broadcast.clock();
+        match SystemAudio::start(move || clock.now().into()) {
+            Ok(source) => broadcast.audio().set(source),
+            Err(e) => {
+                warn!("sharing without sound: {e:#}");
+                self.notice(Notice::Error(format!("The share has no sound: {e:#}")));
+            }
+        }
     }
 
     /// Drops out of the room locally: stops publishing, forgets the roster,
     /// and lets the mesh close every link. Telling others is the caller's job.
     pub async fn leave_local(&self) {
-        let broadcast = {
+        let (voice, screen) = {
             let mut local = self.local.lock().unwrap();
             local.screen = None;
-            local.broadcast.take()
+            local.meter = None;
+            (local.voice.take(), local.screen_broadcast.take())
         };
-        if let Some(broadcast) = broadcast {
+        for broadcast in [voice, screen].into_iter().flatten() {
             broadcast.finish().await;
         }
         self.room.lock().unwrap().leave();
@@ -521,6 +725,8 @@ impl Inner {
         // turned away.
         self.knocks.lock().unwrap().clear();
         self.quality_modes.lock().unwrap().clear();
+        self.audio_prefs.lock().unwrap().clear();
+        self.levels.lock().unwrap().clear();
         self.roster_changed(None);
         info!("left the room");
     }
@@ -532,6 +738,7 @@ impl Inner {
         let room = self.room.lock().unwrap();
         let peers = self.peers.lock().unwrap();
         let modes = self.quality_modes.lock().unwrap();
+        let prefs = self.audio_prefs.lock().unwrap();
 
         let room_view = room.is_active().then(|| {
             let is_coordinator = room.is_coordinator(&own);
@@ -550,12 +757,16 @@ impl Inner {
                         peer.quality = parsed
                             .and_then(|p| modes.get(&p).copied())
                             .unwrap_or_default();
+                        let audio = parsed
+                            .and_then(|p| prefs.get(&p).copied())
+                            .unwrap_or_default();
                         MemberView {
                             is_self: id == own,
                             is_coordinator: room.coordinator_id.as_deref() == Some(id.as_str()),
                             id,
                             name,
                             peer,
+                            audio,
                         }
                     })
                     .collect(),
@@ -582,6 +793,10 @@ impl Inner {
             sharing: local.screen.is_some(),
             max_quality: *self.max_quality.lock().unwrap(),
             knocks,
+            mic_device: local.mic_device.clone(),
+            output_device: local.output_device.clone(),
+            screen_audio: local.screen_audio,
+            screen_audio_supported: audio::system_audio_supported(),
         }
     }
 

@@ -1,15 +1,17 @@
 <script lang="ts">
   import { api } from "./api";
   import type { DisplayInfo, MemberView, Quality, QualityMode, Snapshot } from "./types";
+  import AudioSettings from "./AudioSettings.svelte";
   import Orb from "./Orb.svelte";
-  import ScreenView from "./ScreenView.svelte";
+  import PeerMenu from "./PeerMenu.svelte";
+  import Stage from "./Stage.svelte";
 
   let { snapshot }: { snapshot: Snapshot } = $props();
 
   // Room is only mounted while there is a room.
   const room = $derived(snapshot.room!);
   const members = $derived(room.members);
-  
+
   // Who is sharing right now, ourselves included.
   const sharers = $derived(members.filter((m) => (m.is_self ? snapshot.sharing : m.has_video)));
 
@@ -51,6 +53,12 @@
       [id]: value === "auto" ? { mode: "auto" } : { mode: "pinned", quality: value as Quality },
     };
   }
+
+  // Right-click menu on a participant.
+  let menu = $state<{ id: string; x: number; y: number } | null>(null);
+  const menuMember = $derived(menu ? members.find((m) => m.id === menu!.id) : undefined);
+
+  let showAudio = $state(false);
 
   // Invites and the room code, for the host.
   let showInvite = $state(false);
@@ -160,50 +168,24 @@
   {/each}
 
   {#if focused}
-    <section class="stage">
-      {#key focused.id}
-        <ScreenView id={focused.id} label={`${focused.name}'s screen`} />
-      {/key}
-      <div class="stage-bar">
-        <span>{focused.is_self ? "Your screen" : `${focused.name}'s screen`}</span>
-        {#if !focused.is_self}
-          <span class="meta">
-            {#if focused.width}{focused.width}×{focused.height}, {focused.fps} fps{/if}
-          </span>
-          <label>
-            <span class="visually-hidden">Picture quality</span>
-            <select
-              class="field compact"
-              value={qualityChoice(focused)}
-              onchange={(e) => chooseQuality(focused.id, e.currentTarget.value)}
-            >
-              <option value="auto">Quality: automatic</option>
-              <option value="high">Quality: high</option>
-              <option value="mid">Quality: medium</option>
-              <option value="low">Quality: low</option>
-            </select>
-          </label>
-        {/if}
-      </div>
-    </section>
+    <Stage
+      member={focused}
+      quality={qualityChoice(focused)}
+      onquality={(value) => chooseQuality(focused.id, value)}
+      sendingSound={snapshot.screen_audio}
+    />
   {/if}
 
   <section class="people" aria-label="People in the room">
     {#each members as member (member.id)}
-      <div class="person">
-        <Orb
-          {member}
-          micOn={snapshot.mic_on}
-          small={!!focused}
-          focused={focused?.id === member.id}
-          onselect={sharers.some((s) => s.id === member.id) ? () => (chosen = member.id) : null}
-        />
-        {#if room.is_coordinator && !member.is_self}
-          <button class="kick" onclick={() => api.kick(member.id)} aria-label={`Remove ${member.name}`}>
-            Remove
-          </button>
-        {/if}
-      </div>
+      <Orb
+        {member}
+        micOn={snapshot.mic_on}
+        small={!!focused}
+        focused={focused?.id === member.id}
+        onselect={sharers.some((s) => s.id === member.id) ? () => (chosen = member.id) : null}
+        onmenu={(e) => (menu = { id: member.id, x: e.clientX, y: e.clientY })}
+      />
     {/each}
   </section>
 
@@ -245,6 +227,7 @@
         <option value="low">Send up to 360p</option>
       </select>
     </label>
+    <button class="button quiet" onclick={() => (showAudio = true)}>Audio</button>
     <span class="spacer"></span>
     {#if confirmingLeave}
       <span class="confirm">Leaving ends the room for everyone.</span>
@@ -255,6 +238,24 @@
     </button>
   </footer>
 </div>
+
+{#if menu && menuMember}
+  {#key menu}
+    <PeerMenu
+      member={menuMember}
+      x={menu.x}
+      y={menu.y}
+      isHost={room.is_coordinator}
+      micOn={snapshot.mic_on}
+      onclose={() => (menu = null)}
+      onaudiosettings={() => (showAudio = true)}
+    />
+  {/key}
+{/if}
+
+{#if showAudio}
+  <AudioSettings {snapshot} onclose={() => (showAudio = false)} />
+{/if}
 
 <style>
   .room {
@@ -343,28 +344,6 @@
     flex: 1;
   }
 
-  .stage {
-    min-height: 0;
-    display: grid;
-    grid-template-rows: minmax(0, 1fr) auto;
-    gap: 0.5rem;
-  }
-
-  .stage-bar {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-  }
-
-  .stage-bar > span:first-child {
-    font-weight: 600;
-  }
-
-  .meta {
-    color: var(--mist);
-    flex: 1;
-  }
-
   .people {
     display: flex;
     flex-wrap: wrap;
@@ -376,25 +355,6 @@
   .staged .people {
     align-content: start;
     gap: 0.5rem 1.25rem;
-  }
-
-  .person {
-    display: grid;
-    justify-items: center;
-  }
-
-  .kick {
-    border: 0;
-    background: none;
-    color: var(--mist);
-    font-size: var(--step--1);
-    text-decoration: underline;
-    opacity: 0;
-  }
-
-  .person:hover .kick,
-  .kick:focus-visible {
-    opacity: 1;
   }
 
   .picker {

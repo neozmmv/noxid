@@ -3,6 +3,7 @@
 //! relay can reuse it.
 
 mod admin;
+pub mod audio;
 mod gate;
 pub mod identity;
 pub mod log;
@@ -11,11 +12,21 @@ mod mesh;
 mod node;
 pub mod room;
 
-pub use node::{KnockView, MemberView, Node, NodeConfig, Notice, PeerView, QualityMode, RoomView, Snapshot};
+pub use node::{
+    KnockView, MAX_VOLUME, MemberView, Node, NodeConfig, Notice, PeerAudio, PeerView, QualityMode, RoomView,
+    Snapshot, Stream,
+};
 
-/// The broadcast path a member publishes under. Named by endpoint id so a
-/// subscriber asks for a path rather than a peer, which is what lets a relay
-/// serve the same path later without the subscriber caring who answers.
-pub fn broadcast_path(id: &iroh::EndpointId) -> String {
-    format!("noxid/0/{id}")
+/// Where a member publishes their voice. Named by endpoint id so a subscriber
+/// asks for a path rather than a peer, which is what lets a relay serve the
+/// same path later without the subscriber caring who answers.
+pub fn voice_path(id: &iroh::EndpointId) -> String {
+    format!("noxid/1/voice/{id}")
+}
+
+/// Where a member publishes a screen share: the picture and, when enabled, the
+/// PC's sound. A broadcast of its own, so it comes and goes with the share and
+/// its sound has a volume of its own on the receiving end.
+pub fn screen_path(id: &iroh::EndpointId) -> String {
+    format!("noxid/1/screen/{id}")
 }

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import { api } from "./api";
+  import AudioSettings from "./AudioSettings.svelte";
   import type { Snapshot } from "./types";
 
   let { snapshot }: { snapshot: Snapshot } = $props();
@@ -9,6 +10,7 @@
   let name = $state(untrack(() => snapshot.name));
   let roomName = $state("");
   let code = $state("");
+  let showAudio = $state(false);
   let busy = $state<"start" | "join" | null>(null);
   let error = $state<string | null>(null);
 
@@ -56,10 +58,13 @@
     <p>Voice calls and screen sharing for small groups, straight between your computers.</p>
   </header>
 
-  <label class="name">
-    <span>Your name</span>
-    <input class="field" bind:value={name} onblur={saveName} placeholder="How others see you" maxlength="32" />
-  </label>
+  <div class="you">
+    <label class="name">
+      <span>Your name</span>
+      <input class="field" bind:value={name} onblur={saveName} placeholder="How others see you" maxlength="32" />
+    </label>
+    <button class="button quiet" onclick={() => (showAudio = true)}>Audio settings</button>
+  </div>
 
   <div class="ways">
     <form onsubmit={start}>
@@ -88,6 +93,10 @@
     <p class="error" role="alert">{error}</p>
   {/if}
 </div>
+
+{#if showAudio}
+  <AudioSettings {snapshot} onclose={() => (showAudio = false)} />
+{/if}
 
 <style>
   .lobby {
@@ -122,9 +131,16 @@
     max-width: 34ch;
   }
 
+  .you {
+    display: flex;
+    align-items: end;
+    gap: 0.8rem;
+  }
+
   .name {
     display: grid;
     gap: 0.4rem;
+    width: 100%;
     max-width: 320px;
   }
 

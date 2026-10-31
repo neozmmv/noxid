@@ -5146,7 +5146,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bs58",
+ "bytes",
  "chrono",
+ "cpal",
  "dirs",
  "getrandom 0.4.3",
  "hex",
@@ -5154,11 +5156,15 @@ dependencies = [
  "iroh-live",
  "iroh-moq",
  "moq-media",
+ "moq-net",
+ "n0-future",
  "serde",
  "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "windows",
+ "windows-core",
 ]
 
 [[package]]
