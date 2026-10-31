@@ -1,0 +1,30 @@
+[package]
+name = "noxid-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+iroh.workspace = true
+iroh-live = { workspace = true, features = ["capture", "playback", "aec", "sound-server"] }
+iroh-moq.workspace = true
+moq-media = { workspace = true, features = ["capture", "playback", "aec", "sound-server"] }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+bs58 = "0.5"
+hex = "0.4"
+getrandom = "0.4"
+dirs = "7"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+[features]
+# Generated video and audio, so a call can be tested without devices.
+test-source = ["moq-media/test-source"]
+# Linux screen capture through xdg-desktop-portal, which Wayland requires.
+# Links libpipewire-0.3, so it is opt-in.
+pipewire = ["moq-media/pipewire"]

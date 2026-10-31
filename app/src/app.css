@@ -1,0 +1,132 @@
+:root {
+  /* Night palette: the app is named for it, so there is no light theme. */
+  --ink: #1b1f3b;
+  --dusk: #262b4f;
+  --dusk-raised: #30365f;
+  --moon: #f3f1fa;
+  --mist: #b9bcd6;
+  --lamp: #f6b94a;
+  --signal: #e5636b;
+  --focus: #9fb4ff;
+
+  --font: "Familjen Grotesk Variable", system-ui, sans-serif;
+  /* Type scale on a 1.25 ratio from a 15px body. */
+  --step--1: 0.8rem;
+  --step-0: 0.9375rem;
+  --step-1: 1.17rem;
+  --step-2: 1.46rem;
+  --step-3: 1.83rem;
+  --step-4: 2.29rem;
+
+  color-scheme: dark;
+  font-family: var(--font);
+  font-size: 16px;
+  line-height: 1.45;
+  color: var(--moon);
+  background: var(--ink);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--ink);
+  font-size: var(--step-0);
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+
+/* Shared control vocabulary. */
+.field {
+  width: 100%;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--dusk-raised);
+  border-radius: 10px;
+  background: var(--dusk);
+}
+
+.field::placeholder {
+  color: var(--mist);
+  opacity: 0.7;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  padding: 0.6rem 1.1rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--dusk-raised);
+  font-weight: 600;
+}
+
+.button:hover:not(:disabled) {
+  background: #3a416f;
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.button.primary {
+  background: var(--lamp);
+  color: var(--ink);
+}
+
+.button.primary:hover:not(:disabled) {
+  background: #ffc964;
+}
+
+.button.danger {
+  background: var(--signal);
+  color: var(--ink);
+}
+
+.button.quiet {
+  background: transparent;
+  border-color: var(--dusk-raised);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
