@@ -1,0 +1,150 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    name: test & lint (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: system deps
+        uses: ./.github/actions/system-deps
+
+      # The app crate embeds the built frontend, so it has to exist before
+      # anything in the workspace compiles.
+      - name: frontend
+        working-directory: app
+        run: |
+          npm ci
+          npm run build
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: test
+        run: cargo test --workspace
+
+  bundle:
+    name: bundle ${{ matrix.name }}
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x86_64
+            os: windows-latest
+            bundles: nsis
+          - name: linux-x86_64
+            os: ubuntu-latest
+            bundles: deb,appimage
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: bundle-${{ matrix.name }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: system deps
+        uses: ./.github/actions/system-deps
+
+      - name: install frontend deps
+        working-directory: app
+        run: npm ci
+
+      # On a tag the installers carry the tag's version; otherwise the one in
+      # tauri.conf.json. The leading `v` is not part of a semver.
+      - name: bundle
+        working-directory: app
+        shell: bash
+        env:
+          # linuxdeploy's bundled strip is older than Ubuntu 24.04's libraries
+          # and fails on them; the binaries are fine unstripped.
+          NO_STRIP: "true"
+        run: |
+          args=(--bundles "${{ matrix.bundles }}")
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            args+=(--config "{\"version\":\"${GITHUB_REF_NAME#v}\"}")
+          fi
+          npx tauri build "${args[@]}"
+
+      # Stable asset names, so the install scripts can always fetch
+      # releases/latest/download/<name> without asking the API what the
+      # version-stamped file is called.
+      - name: stage (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          $setup = Get-ChildItem target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          Copy-Item $setup.FullName "dist/noxid-${{ matrix.name }}-setup.exe"
+          Copy-Item scripts/install.ps1 dist/install.ps1
+          Get-ChildItem dist -File | ForEach-Object {
+            (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower() + "  $($_.Name)" |
+              Out-File -Encoding ascii "$($_.FullName).sha256"
+          }
+          Get-ChildItem dist
+
+      - name: stage (linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp target/release/bundle/deb/*.deb "dist/noxid-${{ matrix.name }}.deb"
+          cp target/release/bundle/appimage/*.AppImage "dist/noxid-${{ matrix.name }}.AppImage"
+          cp scripts/install.sh dist/install.sh
+          cd dist
+          for f in *; do sha256sum "$f" > "$f.sha256"; done
+          ls -l
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noxid-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: release
+    needs: bundle
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            noxid-*
+            install.*
+          generate_release_notes: true

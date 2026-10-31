@@ -1,0 +1,28 @@
+name: system deps
+description: Native libraries the media stack and Tauri need to build.
+
+runs:
+  using: composite
+  steps:
+    # Media: ALSA, PipeWire and JACK are the sound servers cpal reaches;
+    # libclang is bindgen for the PipeWire and V4L2 bindings; NASM assembles
+    # openh264 and aws-lc. Tauri: WebKitGTK and friends, from its prerequisites.
+    - name: Linux
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          libasound2-dev libpipewire-0.3-dev libjack-jackd2-dev libspa-0.2-dev \
+          libclang-dev nasm \
+          libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+          libxdo-dev libssl-dev build-essential file patchelf
+
+    # aws-lc-sys assembles its x86_64 primitives with NASM, which the Windows
+    # image does not carry.
+    - name: Windows
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        choco install nasm --no-progress -y
+        echo "C:\Program Files\NASM" >> $env:GITHUB_PATH
