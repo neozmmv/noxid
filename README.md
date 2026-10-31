@@ -91,3 +91,13 @@ Pushing a tag of the form `vX.Y.Z` (for example `v0.1.0`) builds the Windows
 installer, the `.deb` and the AppImage, and publishes them as a GitHub release
 named "Noxid vX.Y.Z", each with a `.sha256` file. The install scripts check that
 hash before installing anything.
+
+Clippy, the tests and the frontend type check run as part of that workflow,
+before anything is built. If any of them fails, no release is published. They
+do not run on ordinary pushes; run them locally before tagging:
+
+```sh
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+(cd app && bun run check)
+```
