@@ -32,7 +32,10 @@ impl MicMeter {
         let device = input::find_input(device)?;
         let (running, _) = input::open(device, move |samples| {
             let peak = samples.iter().fold(0.0f32, |peak, s| peak.max(s.abs()));
-            writer.store(peak.min(1.0).to_bits(), Ordering::Relaxed);
+            // Held at the highest peak until read. For non-negative floats the
+            // bit patterns order the same way as the values, so an integer max
+            // is a float max.
+            writer.fetch_max(peak.min(1.0).to_bits(), Ordering::Relaxed);
         })?;
         Ok(Self {
             level,
@@ -40,8 +43,10 @@ impl MicMeter {
         })
     }
 
-    /// The peak of the most recent buffer, in `0.0..=1.0`.
+    /// The highest peak since the last call, in `0.0..=1.0`, and starts a new
+    /// window. Reading only the latest buffer would miss most of a short
+    /// syllable between two reads.
     pub fn level(&self) -> f32 {
-        f32::from_bits(self.level.load(Ordering::Relaxed))
+        f32::from_bits(self.level.swap(0, Ordering::Relaxed))
     }
 }

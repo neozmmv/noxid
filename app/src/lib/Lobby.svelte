@@ -151,11 +151,14 @@
   .ways {
     display: grid;
     grid-template-columns: 1fr 1fr;
+    grid-template-rows: repeat(4, auto);
+    row-gap: 0.8rem;
   }
 
   form {
     display: grid;
-    gap: 0.8rem;
+    grid-row: span 4;
+    grid-template-rows: subgrid;
     align-content: start;
     padding-right: 2rem;
   }
@@ -194,7 +197,13 @@
   @media (max-width: 680px) {
     .ways {
       grid-template-columns: 1fr;
+      grid-template-rows: none;
       gap: 2rem;
+    }
+    form {
+      grid-row: auto;
+      grid-template-rows: none;
+      gap: 0.8rem;
     }
     form + form {
       padding: 2rem 0 0;

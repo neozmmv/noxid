@@ -114,7 +114,7 @@ button {
 
 .button.danger {
   background: var(--signal);
-  color: var(--ink);
+  color: #fff;
 }
 
 .button.quiet {

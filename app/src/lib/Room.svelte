@@ -205,12 +205,48 @@
 
   <footer>
     <button
-      class="button"
+      class="mic"
       class:off={!snapshot.mic_on}
       aria-pressed={!snapshot.mic_on}
+      aria-label={snapshot.mic_on ? "Turn mic off" : "Turn mic on"}
+      title={snapshot.mic_on ? "Turn mic off" : "Turn mic on"}
       onclick={() => api.setMic(!snapshot.mic_on)}
     >
-      {snapshot.mic_on ? "Mute" : "Unmute"}
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+        {#if snapshot.mic_on}
+          <path
+            fill="currentColor"
+            d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.93V21h2v-3.07A7 7 0 0 0 19 11h-2Z"
+          />
+        {:else}
+          <path
+            fill="currentColor"
+            d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-8.58 3.5l-1.42 1.42A7 7 0 0 0 11 17.93V21h2v-3.07A7 7 0 0 0 19 11h-2ZM3.7 2.3 2.3 3.7l18 18 1.4-1.4-18-18Z"
+          />
+        {/if}
+      </svg>
+    </button>
+    <button
+      class="mic"
+      class:off={snapshot.deafened}
+      aria-pressed={snapshot.deafened}
+      aria-label={snapshot.deafened ? "Undeafen" : "Deafen (hear nobody)"}
+      title={snapshot.deafened ? "Undeafen" : "Deafen (hear nobody)"}
+      onclick={() => api.setDeafened(!snapshot.deafened)}
+    >
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+        {#if snapshot.deafened}
+          <path
+            fill="currentColor"
+            d="M12 3a9 9 0 0 0-9 9v7a2 2 0 0 0 2 2h3v-8H5v-1a7 7 0 0 1 11.6-5.27l1.42-1.42A8.96 8.96 0 0 0 12 3Zm7 5.83-1.65 1.65c.42.9.65 1.79.65 2.52v1h-3v8h3a2 2 0 0 0 2-2v-7c0-1.47-.36-2.86-1-4.17ZM3.7 2.3 2.3 3.7l18 18 1.4-1.4-18-18Z"
+          />
+        {:else}
+          <path
+            fill="currentColor"
+            d="M12 3a9 9 0 0 0-9 9v7a2 2 0 0 0 2 2h3v-8H5v-1a7 7 0 0 1 14 0v1h-3v8h3a2 2 0 0 0 2-2v-7a9 9 0 0 0-9-9Z"
+          />
+        {/if}
+      </svg>
     </button>
     <button class="button" aria-pressed={snapshot.sharing} onclick={toggleShare}>
       {snapshot.sharing ? "Stop sharing" : "Share screen"}
@@ -377,9 +413,27 @@
     border-top: 1px solid var(--dusk-raised);
   }
 
-  footer .off {
+  .mic {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    border: 0;
+    border-radius: 50%;
+    background: var(--dusk-raised);
+  }
+
+  .mic:hover {
+    background: #3a416f;
+  }
+
+  .mic.off {
     background: var(--signal);
     color: var(--ink);
+  }
+
+  .mic.off:hover {
+    background: #ee7a81;
   }
 
   .spacer {

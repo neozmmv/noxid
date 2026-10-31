@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { api } from "./api";
+  import { METER_FLOOR_DB, prefs, setSensitivity, toDb, voice } from "./levels.svelte";
   import type { AudioDevice, Snapshot } from "./types";
 
   // Which microphone we talk into, where everyone else is heard, and whether
@@ -33,6 +34,25 @@
   }
 
   onMount(load);
+
+  // Keep the mic meter running while this is open, even outside a call, so
+  // the sensitivity can be set against a live level.
+  onMount(() => {
+    api.setMicTest(true);
+    return () => {
+      api.setMicTest(false);
+    };
+  });
+
+  // The meter falls back slowly, so a peak stays readable for a moment.
+  let shownDb = $state(METER_FLOOR_DB);
+  $effect(() => {
+    const db = toDb(voice.levels[snapshot.id] ?? 0);
+    const previous = untrack(() => shownDb);
+    shownDb = db > previous ? db : Math.max(db, previous - 6);
+  });
+  const toPercent = (db: number) => ((db - METER_FLOOR_DB) / -METER_FLOOR_DB) * 100;
+  const speaking = $derived(shownDb > prefs.sensitivityDb);
 
   async function pick(kind: "input" | "output", value: string) {
     error = null;
@@ -93,6 +113,34 @@
       {/each}
     </select>
   </label>
+
+  <div class="sensitivity">
+    <label for="sensitivity">
+      <span>Input sensitivity</span>
+      <output>{prefs.sensitivityDb} dB</output>
+    </label>
+    <div class="meter" class:speaking aria-hidden="true">
+      <div class="fill" style={`width: ${toPercent(shownDb)}%`}></div>
+      <div class="mark" style={`left: ${toPercent(prefs.sensitivityDb)}%`}></div>
+    </div>
+    <input
+      id="sensitivity"
+      type="range"
+      min={METER_FLOOR_DB}
+      max="-5"
+      step="1"
+      value={prefs.sensitivityDb}
+      oninput={(e) => setSensitivity(Number(e.currentTarget.value))}
+    />
+    <small>
+      {#if !snapshot.mic_on}
+        Your mic is off, so the meter is still.
+      {:else}
+        Talk normally: the bar should pass the line while you speak and stay below it when you are
+        quiet. Move the slider left if your ring does not light up.
+      {/if}
+    </small>
+  </div>
 
   {#if snapshot.screen_audio_supported}
     <label class="check">
@@ -164,6 +212,52 @@
 
   select.field {
     background: var(--ink);
+  }
+
+  .sensitivity {
+    display: grid;
+    gap: 0.45rem;
+  }
+
+  .sensitivity label {
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .sensitivity output {
+    color: var(--moon);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .meter {
+    position: relative;
+    height: 10px;
+    border-radius: 999px;
+    background: var(--ink);
+    overflow: hidden;
+  }
+
+  .fill {
+    height: 100%;
+    background: var(--mist);
+    transition: width 90ms linear;
+  }
+
+  .meter.speaking .fill {
+    background: var(--lamp);
+  }
+
+  .mark {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--moon);
+  }
+
+  .sensitivity input[type="range"] {
+    width: 100%;
+    accent-color: var(--lamp);
   }
 
   .check {

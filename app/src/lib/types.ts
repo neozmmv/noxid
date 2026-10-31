@@ -48,6 +48,8 @@ export interface Snapshot {
   name: string;
   room: RoomView | null;
   mic_on: boolean;
+  /** Hearing nobody; the mic is off while it lasts. */
+  deafened: boolean;
   sharing: boolean;
   max_quality: Quality;
   knocks: KnockView[];

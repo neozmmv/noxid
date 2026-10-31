@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { voice } from "./levels.svelte";
+  import { REMOTE_THRESHOLD, fromDb, prefs, voice } from "./levels.svelte";
   import type { MemberView } from "./types";
 
   // One participant as a voice orb. A ring lights up around it while they
@@ -16,8 +16,6 @@
   let { member, micOn = true, small = false, focused = false, onselect = null, onmenu = null }: Props =
     $props();
 
-  /** Peak level above which someone counts as speaking. */
-  const THRESHOLD = 0.06;
   /** How long the ring stays lit after the level drops, so it does not
    *  flicker between syllables. */
   const HOLD_MS = 300;
@@ -37,11 +35,14 @@
   const connecting = $derived(!member.is_self && !member.connected);
 
   const level = $derived(voice.levels[member.id] ?? 0);
+  // Peak above which someone counts as speaking: our own sensitivity setting
+  // for us, a fixed level for everyone else.
+  const threshold = $derived(member.is_self ? fromDb(prefs.sensitivityDb) : REMOTE_THRESHOLD);
   let speaking = $state(false);
   let release: ReturnType<typeof setTimeout> | undefined;
 
   $effect(() => {
-    if (!micOff && !connecting && level > THRESHOLD) {
+    if (!micOff && !connecting && level > threshold) {
       clearTimeout(release);
       release = undefined;
       speaking = true;

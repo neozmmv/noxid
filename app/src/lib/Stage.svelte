@@ -231,6 +231,8 @@
   }
 
   .fullscreen .bar {
+    position: relative;
+    z-index: 1;
     grid-row: 1;
     grid-column: 1;
     align-self: end;

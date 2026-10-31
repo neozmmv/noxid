@@ -143,6 +143,18 @@ async fn set_output_device(state: tauri::State<'_, AppState>, device: Option<Str
 }
 
 #[tauri::command]
+async fn set_deafened(state: tauri::State<'_, AppState>, on: bool) -> CommandResult<()> {
+    node(&state).await?.set_deafened(on);
+    Ok(())
+}
+
+#[tauri::command]
+async fn set_mic_test(state: tauri::State<'_, AppState>, on: bool) -> CommandResult<()> {
+    node(&state).await?.set_mic_test(on);
+    Ok(())
+}
+
+#[tauri::command]
 async fn set_screen_audio(state: tauri::State<'_, AppState>, on: bool) -> CommandResult<()> {
     let node = node(&state).await?;
     node.set_screen_audio(on);
@@ -354,6 +366,8 @@ pub fn run() {
             set_output_device,
             set_screen_audio,
             set_peer_audio,
+            set_mic_test,
+            set_deafened,
         ])
         .build(tauri::generate_context!())
         .expect("error while building the app");

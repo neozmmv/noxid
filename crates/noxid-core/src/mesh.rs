@@ -44,9 +44,13 @@ const MUTED_GAIN: f32 = 1e-4;
 /// How often a broadcast the peer has not published yet is asked for again.
 const RESUBSCRIBE: Duration = Duration::from_secs(1);
 
-/// How often voice levels are sampled. Fast enough that a speaking indicator
-/// follows syllables rather than sentences.
-const LEVEL_REFRESH: Duration = Duration::from_millis(100);
+/// How often a voice's peak is sampled. The track reports the peak of its
+/// latest output buffer, so sampling much faster than the level is published
+/// is what keeps short syllables from slipping between two reads.
+const LEVEL_SAMPLE: Duration = Duration::from_millis(20);
+
+/// How often the highest sampled peak is published for the speaking indicator.
+const LEVEL_PUBLISH: Duration = Duration::from_millis(100);
 
 /// Close code for a member's connections once the roster drops them.
 const CLOSE_REMOVED: u32 = 4;
@@ -225,14 +229,16 @@ fn update_view(inner: &Inner, id: EndpointId, change: impl FnOnce(&mut PeerView)
 async fn voice_loop(inner: &Inner, id: EndpointId, session: &MoqSession) {
     let path = crate::voice_path(&id);
     update_view(inner, id, |v| v.connected = true);
-    let slow_every = (REFRESH.as_millis() / LEVEL_REFRESH.as_millis()) as u32;
+    let slow_every = (REFRESH.as_millis() / LEVEL_SAMPLE.as_millis()) as u32;
+    let publish_every = (LEVEL_PUBLISH.as_millis() / LEVEL_SAMPLE.as_millis()) as u32;
     loop {
         let sub = subscribe(session, &path).await;
         let broadcast = sub.broadcast();
         let mut audio: Option<AudioTrack> = None;
         let mut applied_gain = f32::NAN;
-        let mut tick = tokio::time::interval(LEVEL_REFRESH);
+        let mut tick = tokio::time::interval(LEVEL_SAMPLE);
         let mut ticks = 0u32;
+        let mut held = 0.0f32;
 
         loop {
             tokio::select! {
@@ -263,13 +269,17 @@ async fn voice_loop(inner: &Inner, id: EndpointId, session: &MoqSession) {
             }
             ticks = ticks.wrapping_add(1);
 
-            let gain = inner
-                .audio_prefs
-                .lock()
-                .unwrap()
-                .get(&id)
-                .map(|p| p.voice_gain())
-                .unwrap_or(1.0);
+            let gain = if inner.deafened.load(std::sync::atomic::Ordering::Relaxed) {
+                0.0
+            } else {
+                inner
+                    .audio_prefs
+                    .lock()
+                    .unwrap()
+                    .get(&id)
+                    .map(|p| p.voice_gain())
+                    .unwrap_or(1.0)
+            };
             // The track's peak is measured after its volume, so a muted
             // participant would stop showing as speaking. Muting plays at an
             // inaudible gain instead of zero, and the meter divides it back out.
@@ -284,7 +294,11 @@ async fn voice_loop(inner: &Inner, id: EndpointId, session: &MoqSession) {
                 }
                 None => 0.0,
             };
-            inner.levels.lock().unwrap().insert(id, level);
+            held = held.max(level);
+            if ticks.is_multiple_of(publish_every) {
+                inner.levels.lock().unwrap().insert(id, held);
+                held = 0.0;
+            }
         }
 
         inner.levels.lock().unwrap().remove(&id);
@@ -339,13 +353,17 @@ async fn serve_screen(inner: &Inner, id: EndpointId, sub: &Subscription) {
             _ => {}
         }
         if let Some(track) = &audio {
-            let gain = inner
-                .audio_prefs
-                .lock()
-                .unwrap()
-                .get(&id)
-                .map(|p| p.screen_gain())
-                .unwrap_or(1.0);
+            let gain = if inner.deafened.load(std::sync::atomic::Ordering::Relaxed) {
+                0.0
+            } else {
+                inner
+                    .audio_prefs
+                    .lock()
+                    .unwrap()
+                    .get(&id)
+                    .map(|p| p.screen_gain())
+                    .unwrap_or(1.0)
+            };
             if gain != applied_gain {
                 track.set_volume(gain);
                 applied_gain = gain;

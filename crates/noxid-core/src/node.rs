@@ -92,6 +92,8 @@ pub struct Snapshot {
     pub name: String,
     pub room: Option<RoomView>,
     pub mic_on: bool,
+    /// Hearing nobody (and, while it lasts, mic off).
+    pub deafened: bool,
     pub sharing: bool,
     pub max_quality: Quality,
     /// People waiting at the door. Only ever non-empty on the coordinator.
@@ -186,8 +188,13 @@ struct Local {
     output_device: Option<String>,
     screen: Option<Screen>,
     screen_audio: bool,
-    /// Measures our own voice while the mic is on in a room.
+    /// Measures our own voice while the mic is on in a room, or while a mic
+    /// test is running.
     meter: Option<MicMeter>,
+    /// Whether the audio settings want a live mic level outside a call.
+    mic_test: bool,
+    /// Whether the mic was on when we deafened, to put it back afterwards.
+    mic_before_deafen: Option<bool>,
 }
 
 pub(crate) struct Inner {
@@ -211,6 +218,8 @@ pub(crate) struct Inner {
     pub quality_modes: Mutex<HashMap<EndpointId, QualityMode>>,
     /// How loud we hear each participant.
     pub audio_prefs: Mutex<HashMap<EndpointId, PeerAudio>>,
+    /// Hear nobody, whatever their own volume says.
+    pub deafened: std::sync::atomic::AtomicBool,
     /// The current roster's ids, which the mesh follows.
     pub roster_tx: watch::Sender<Vec<EndpointId>>,
     /// Bumped on every change, so a frontend knows to read a new snapshot.
@@ -259,6 +268,8 @@ impl Node {
                 screen: None,
                 screen_audio: audio::system_audio_supported(),
                 meter: None,
+                mic_test: false,
+                mic_before_deafen: None,
             }),
             max_quality: Mutex::new(Quality::High),
             knocks: Mutex::new(HashMap::new()),
@@ -267,6 +278,7 @@ impl Node {
             tiles: Mutex::new(HashMap::new()),
             quality_modes: Mutex::new(HashMap::new()),
             audio_prefs: Mutex::new(HashMap::new()),
+            deafened: std::sync::atomic::AtomicBool::new(false),
             roster_tx,
             changed: watch::channel(0).0,
             notices: broadcast::channel(16).0,
@@ -473,6 +485,32 @@ impl Node {
     pub fn set_mic(&self, on: bool) {
         let mut local = self.inner.local.lock().unwrap();
         local.mic_on = on;
+        // Turning the mic on while deafened undeafens, as in other voice apps:
+        // talking to people you cannot hear is never what was meant.
+        if on && self.inner.deafened.swap(false, std::sync::atomic::Ordering::Relaxed) {
+            local.mic_before_deafen = None;
+        }
+        self.inner.apply_mic(&mut local);
+        drop(local);
+        self.inner.bump();
+    }
+
+    /// Stops hearing everyone (voices and shared sound alike) and turns the
+    /// mic off; undeafening puts the mic back the way it was.
+    pub fn set_deafened(&self, on: bool) {
+        use std::sync::atomic::Ordering;
+        let mut local = self.inner.local.lock().unwrap();
+        let was = self.inner.deafened.swap(on, Ordering::Relaxed);
+        match (was, on) {
+            (false, true) => {
+                local.mic_before_deafen = Some(local.mic_on);
+                local.mic_on = false;
+            }
+            (true, false) => {
+                local.mic_on = local.mic_before_deafen.take().unwrap_or(local.mic_on);
+            }
+            _ => {}
+        }
         self.inner.apply_mic(&mut local);
         drop(local);
         self.inner.bump();
@@ -486,6 +524,14 @@ impl Node {
         self.inner.apply_mic(&mut local);
         drop(local);
         self.inner.bump();
+    }
+
+    /// Runs the mic level meter outside a call, so the audio settings can show
+    /// it while choosing a microphone and a sensitivity.
+    pub fn set_mic_test(&self, on: bool) {
+        let mut local = self.inner.local.lock().unwrap();
+        local.mic_test = on;
+        self.inner.apply_mic(&mut local);
     }
 
     /// Chooses where everyone is heard (`None` for the system default).
@@ -649,14 +695,18 @@ impl Inner {
 
     /// Makes the published mic and the meter match `local`.
     fn apply_mic(&self, local: &mut Local) {
-        let Some(voice) = &local.voice else {
-            local.meter = None;
-            return;
-        };
-        if local.mic_on {
-            media::set_mic(voice, self.mic, local.mic_device.as_deref());
-            // The meter is a second reader of the same mic; a device that
-            // refuses one costs only the indicator.
+        if let Some(voice) = &local.voice {
+            match local.mic_on {
+                true => media::set_mic(voice, self.mic, local.mic_device.as_deref()),
+                false => media::mute_mic(voice),
+            }
+        }
+        // The meter runs while the mic is live in a call, or for a mic test.
+        // It is a second reader of the same mic; a device that refuses one
+        // costs only the indicator.
+        let wanted = (local.voice.is_some() && local.mic_on) || local.mic_test;
+        local.meter = None;
+        if wanted {
             local.meter = match self.mic {
                 Mic::Device => MicMeter::start(local.mic_device.as_deref())
                     .inspect_err(|e| warn!("mic level meter unavailable: {e:#}"))
@@ -664,9 +714,6 @@ impl Inner {
                 #[cfg(feature = "test-source")]
                 Mic::Test => None,
             };
-        } else {
-            media::mute_mic(voice);
-            local.meter = None;
         }
     }
 
@@ -714,11 +761,14 @@ impl Inner {
         let (voice, screen) = {
             let mut local = self.local.lock().unwrap();
             local.screen = None;
-            local.meter = None;
             (local.voice.take(), local.screen_broadcast.take())
         };
         for broadcast in [voice, screen].into_iter().flatten() {
             broadcast.finish().await;
+        }
+        {
+            let mut local = self.local.lock().unwrap();
+            self.apply_mic(&mut local);
         }
         self.room.lock().unwrap().leave();
         // Anyone still waiting at the door of a room that no longer exists is
@@ -790,6 +840,7 @@ impl Inner {
             name: self.name(),
             room: room_view,
             mic_on: local.mic_on,
+            deafened: self.deafened.load(std::sync::atomic::Ordering::Relaxed),
             sharing: local.screen.is_some(),
             max_quality: *self.max_quality.lock().unwrap(),
             knocks,
