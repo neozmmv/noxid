@@ -2,6 +2,8 @@
 // textures and the shader converts to RGB, so the CPU never touches a pixel
 // after the socket hands it over.
 
+import type { Frame } from "./types";
+
 const VERTEX = `#version 300 es
 in vec2 position;
 out vec2 uv;
@@ -35,7 +37,13 @@ void main() {
 const BT601 = [1, 1, 1, 0, -0.344136, 1.772, 1.402, -0.714136, 0];
 const BT709 = [1, 1, 1, 0, -0.187324, 1.8556, 1.5748, -0.468124, 0];
 
-function spaceFor(colorByte) {
+interface ColorSpace {
+  matrix: number[];
+  offset: number[];
+  scale: number[];
+}
+
+function spaceFor(colorByte: number): ColorSpace {
   const full = colorByte % 2 === 1;
   return {
     matrix: colorByte >= 2 ? BT709 : BT601,
@@ -44,18 +52,30 @@ function spaceFor(colorByte) {
   };
 }
 
-function compile(gl, type, source) {
+function compile(gl: WebGL2RenderingContext, type: number, source: string): WebGLShader {
   const shader = gl.createShader(type);
+  if (!shader) throw new Error("could not create a shader");
   gl.shaderSource(shader, source);
   gl.compileShader(shader);
   if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-    throw new Error(gl.getShaderInfoLog(shader));
+    throw new Error(gl.getShaderInfoLog(shader) ?? "shader did not compile");
   }
   return shader;
 }
 
 export class I420Renderer {
-  constructor(canvas) {
+  private readonly gl: WebGL2RenderingContext;
+  private readonly canvas: HTMLCanvasElement;
+  private readonly program: WebGLProgram;
+  private readonly textures: WebGLTexture[];
+  private readonly uniforms: {
+    matrix: WebGLUniformLocation | null;
+    offset: WebGLUniformLocation | null;
+    scale: WebGLUniformLocation | null;
+  };
+  private colorByte = -1;
+
+  constructor(canvas: HTMLCanvasElement) {
     const gl = canvas.getContext("webgl2", { antialias: false, alpha: false });
     if (!gl) throw new Error("WebGL2 is not available");
     this.gl = gl;
@@ -66,7 +86,7 @@ export class I420Renderer {
     gl.attachShader(program, compile(gl, gl.FRAGMENT_SHADER, FRAGMENT));
     gl.linkProgram(program);
     if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-      throw new Error(gl.getProgramInfoLog(program));
+      throw new Error(gl.getProgramInfoLog(program) ?? "shader program did not link");
     }
     gl.useProgram(program);
     this.program = program;
@@ -95,10 +115,9 @@ export class I420Renderer {
       offset: gl.getUniformLocation(program, "offset"),
       scale: gl.getUniformLocation(program, "scale"),
     };
-    this.colorByte = -1;
   }
 
-  draw(frame) {
+  draw(frame: Frame): void {
     const { gl, canvas } = this;
     const { width, height, colorByte, data } = frame;
     if (canvas.width !== width || canvas.height !== height) {
@@ -119,20 +138,20 @@ export class I420Renderer {
     const chromaWidth = width / 2;
     const chromaHeight = height / 2;
     const chromaSize = chromaWidth * chromaHeight;
-    const planes = [
+    const planes: [Uint8Array, number, number][] = [
       [data.subarray(0, lumaSize), width, height],
       [data.subarray(lumaSize, lumaSize + chromaSize), chromaWidth, chromaHeight],
       [data.subarray(lumaSize + chromaSize, lumaSize + 2 * chromaSize), chromaWidth, chromaHeight],
     ];
     planes.forEach(([plane, w, h], unit) => {
       gl.activeTexture(gl.TEXTURE0 + unit);
-      gl.bindTexture(gl.TEXTURE_2D, this.textures[unit]);
+      gl.bindTexture(gl.TEXTURE_2D, this.textures[unit] ?? null);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, w, h, 0, gl.RED, gl.UNSIGNED_BYTE, plane);
     });
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 
-  dispose() {
+  dispose(): void {
     const { gl } = this;
     this.textures.forEach((t) => gl.deleteTexture(t));
     gl.deleteProgram(this.program);

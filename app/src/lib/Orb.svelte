@@ -1,14 +1,24 @@
-<script>
+<script lang="ts">
+  import type { MemberView } from "./types";
+
   // One participant as a voice orb. The ring grows with how loud they are,
   // which is the whole point of a voice-first call: you see who is talking.
-  let { member, micOn = true, small = false, focused = false, onselect = null } = $props();
+  interface Props {
+    member: MemberView;
+    micOn?: boolean;
+    small?: boolean;
+    focused?: boolean;
+    onselect?: (() => void) | null;
+  }
+
+  let { member, micOn = true, small = false, focused = false, onselect = null }: Props = $props();
 
   const initials = $derived(
     member.name
       .split(/\s+/)
       .filter(Boolean)
       .slice(0, 2)
-      .map((w) => w[0].toUpperCase())
+      .map((w) => w.charAt(0).toUpperCase())
       .join("") || "?",
   );
 

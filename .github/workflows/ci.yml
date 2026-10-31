@@ -28,11 +28,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - uses: actions/setup-node@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: app/package-lock.json
+          bun-version: 1.4.0
       - name: system deps
         uses: ./.github/actions/system-deps
 
@@ -41,8 +39,9 @@ jobs:
       - name: frontend
         working-directory: app
         run: |
-          npm ci
-          npm run build
+          bun install --frozen-lockfile
+          bun run check
+          bun run build
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: test
@@ -69,17 +68,15 @@ jobs:
         with:
           cache-on-failure: true
           key: bundle-${{ matrix.name }}
-      - uses: actions/setup-node@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: app/package-lock.json
+          bun-version: 1.4.0
       - name: system deps
         uses: ./.github/actions/system-deps
 
       - name: install frontend deps
         working-directory: app
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       # On a tag the installers carry the tag's version; otherwise the one in
       # tauri.conf.json. The leading `v` is not part of a semver.
@@ -95,7 +92,7 @@ jobs:
           if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
             args+=(--config "{\"version\":\"${GITHUB_REF_NAME#v}\"}")
           fi
-          npx tauri build "${args[@]}"
+          bun run tauri build "${args[@]}"
 
       # Stable asset names, so the install scripts can always fetch
       # releases/latest/download/<name> without asking the API what the

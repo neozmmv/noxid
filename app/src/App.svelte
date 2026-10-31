@@ -1,20 +1,27 @@
-<script>
+<script lang="ts">
   import { onMount } from "svelte";
-  import { api, onSnapshot, onNotice, connectFrames } from "./lib/api.js";
+  import { api, onSnapshot, onNotice, connectFrames } from "./lib/api";
+  import type { Notice, Snapshot } from "./lib/types";
   import Lobby from "./lib/Lobby.svelte";
   import Room from "./lib/Room.svelte";
 
-  let snapshot = $state(null);
-  let notice = $state(null);
-  let startError = $state(null);
+  let snapshot = $state<Snapshot | null>(null);
+  let notice = $state<string | null>(null);
+  let startError = $state<string | null>(null);
 
-  const NOTICES = {
-    kicked: "The host removed you from the room.",
-    room_closed: "The host ended the room.",
-  };
+  function describe(n: Notice): string {
+    switch (n.kind) {
+      case "kicked":
+        return "The host removed you from the room.";
+      case "room_closed":
+        return "The host ended the room.";
+      case "error":
+        return n.message;
+    }
+  }
 
-  function showNotice(n) {
-    notice = NOTICES[n.kind] ?? n.message ?? "Something went wrong.";
+  function showNotice(n: Notice) {
+    notice = describe(n);
     setTimeout(() => (notice = null), 6000);
   }
 

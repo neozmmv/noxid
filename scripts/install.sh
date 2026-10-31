@@ -77,10 +77,10 @@ if [ "$LOCAL" -eq 1 ]; then
     ROOT="$(cd "$(dirname "$0")/.." && pwd)"
     [ -f "$ROOT/app/package.json" ] || die "--local has to be run from a Noxid checkout"
     has cargo || die "--local needs cargo"
-    has npm || die "--local needs npm"
+    has bun || die "--local needs bun (https://bun.sh)"
     info "building (the first build takes a while)"
     if [ "$KIND" = deb ]; then BUNDLE=deb; else BUNDLE=appimage; fi
-    (cd "$ROOT/app" && npm ci && npx tauri build --bundles "$BUNDLE")
+    (cd "$ROOT/app" && bun install --frozen-lockfile && bun run tauri build --bundles "$BUNDLE")
     if [ "$KIND" = deb ]; then
         cp "$(ls -t "$ROOT"/target/release/bundle/deb/*.deb | head -n1)" "$WORK/$ASSET"
     else

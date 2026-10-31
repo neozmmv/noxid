@@ -1,15 +1,16 @@
-<script>
+<script lang="ts">
   import { untrack } from "svelte";
-  import { api } from "./api.js";
+  import { api } from "./api";
+  import type { Snapshot } from "./types";
 
-  let { snapshot } = $props();
+  let { snapshot }: { snapshot: Snapshot } = $props();
 
   // Seeded once from the snapshot; after that the field is the user's.
   let name = $state(untrack(() => snapshot.name));
   let roomName = $state("");
   let code = $state("");
-  let busy = $state(null);
-  let error = $state(null);
+  let busy = $state<"start" | "join" | null>(null);
+  let error = $state<string | null>(null);
 
   const fallbackName = $derived(snapshot.id.slice(0, 10));
   const hasRealName = $derived(name.trim() && name.trim() !== fallbackName);
@@ -20,7 +21,7 @@
     }
   }
 
-  async function start(event) {
+  async function start(event: SubmitEvent) {
     event.preventDefault();
     error = null;
     busy = "start";
@@ -34,7 +35,7 @@
     }
   }
 
-  async function join(event) {
+  async function join(event: SubmitEvent) {
     event.preventDefault();
     error = null;
     busy = "join";

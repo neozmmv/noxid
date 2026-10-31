@@ -1,20 +1,21 @@
-<script>
-  import { api } from "./api.js";
+<script lang="ts">
+  import { api } from "./api";
+  import type { DisplayInfo, MemberView, Quality, QualityMode, Snapshot } from "./types";
   import Orb from "./Orb.svelte";
   import ScreenView from "./ScreenView.svelte";
 
-  let { snapshot } = $props();
+  let { snapshot }: { snapshot: Snapshot } = $props();
 
-  const room = $derived(snapshot.room);
+  // Room is only mounted while there is a room.
+  const room = $derived(snapshot.room!);
   const members = $derived(room.members);
-  const self = $derived(members.find((m) => m.is_self));
-
+  
   // Who is sharing right now, ourselves included.
   const sharers = $derived(members.filter((m) => (m.is_self ? snapshot.sharing : m.has_video)));
 
   // The share on the big stage. The first remote sharer by default, since
   // that is what people are there to look at; clicking an orb changes it.
-  let chosen = $state(null);
+  let chosen = $state<string | null>(null);
   const focused = $derived(
     sharers.find((m) => m.id === chosen) ?? sharers.find((m) => !m.is_self) ?? sharers[0] ?? null,
   );
@@ -22,49 +23,53 @@
   // Receiver-side quality: the share on stage follows the link (adaptive,
   // up to the top rung), the others are pinned to the smallest rung since they
   // are not on screen. A per-share choice on the stage overrides this.
-  let overrides = $state({});
+  let overrides = $state<Record<string, QualityMode>>({});
   $effect(() => {
     for (const m of members) {
       if (m.is_self || !m.has_video) continue;
-      const wanted =
+      const wanted: QualityMode =
         overrides[m.id] ?? (focused?.id === m.id ? { mode: "auto" } : { mode: "pinned", quality: "low" });
-      const current = m.quality;
-      if (current.mode !== wanted.mode || current.quality !== wanted.quality) {
+      if (!sameMode(m.quality, wanted)) {
         api.setPeerQuality(m.id, wanted);
       }
     }
   });
 
-  function qualityChoice(m) {
-    const q = overrides[m.id];
-    return q ? (q.mode === "auto" ? "auto" : q.quality) : "auto";
+  function sameMode(a: QualityMode, b: QualityMode): boolean {
+    if (a.mode === "auto" || b.mode === "auto") return a.mode === b.mode;
+    return a.quality === b.quality;
   }
 
-  function chooseQuality(id, value) {
+  function qualityChoice(m: MemberView): "auto" | Quality {
+    const q = overrides[m.id];
+    return !q || q.mode === "auto" ? "auto" : q.quality;
+  }
+
+  function chooseQuality(id: string, value: string) {
     overrides = {
       ...overrides,
-      [id]: value === "auto" ? { mode: "auto" } : { mode: "pinned", quality: value },
+      [id]: value === "auto" ? { mode: "auto" } : { mode: "pinned", quality: value as Quality },
     };
   }
 
   // Invites and the room code, for the host.
   let showInvite = $state(false);
-  let invite = $state(null);
-  let copied = $state(null);
+  let invite = $state<string | null>(null);
+  let copied = $state<"room" | "invite" | null>(null);
 
   async function newInvite() {
     invite = await api.invite();
   }
 
-  async function copy(text, what) {
+  async function copy(text: string, what: "room" | "invite") {
     await navigator.clipboard.writeText(text);
     copied = what;
     setTimeout(() => (copied = null), 1500);
   }
 
   // Screen sharing.
-  let picking = $state(null);
-  let error = $state(null);
+  let picking = $state<DisplayInfo[] | null>(null);
+  let error = $state<string | null>(null);
 
   async function toggleShare() {
     error = null;
@@ -74,8 +79,9 @@
     }
     try {
       const displays = await api.displays();
-      if (displays.length === 1) {
-        await api.shareScreen(displays[0].id);
+      const only = displays.length === 1 ? displays[0] : undefined;
+      if (only) {
+        await api.shareScreen(only.id);
       } else if (displays.length === 0) {
         error = "No screen to share was found.";
       } else {
@@ -86,7 +92,7 @@
     }
   }
 
-  async function share(id) {
+  async function share(id: string) {
     picking = null;
     try {
       await api.shareScreen(id);
@@ -124,7 +130,7 @@
         <p>Anyone with it can ask to join; you let them in.</p>
         <div class="code">
           <code>{room.room_code}</code>
-          <button class="button quiet" onclick={() => copy(room.room_code, "room")}>
+          <button class="button quiet" onclick={() => room.room_code && copy(room.room_code, "room")}>
             {copied === "room" ? "Copied" : "Copy"}
           </button>
         </div>
@@ -135,7 +141,7 @@
         {#if invite}
           <div class="code">
             <code>{invite}</code>
-            <button class="button quiet" onclick={() => copy(invite, "invite")}>
+            <button class="button quiet" onclick={() => invite && copy(invite, "invite")}>
               {copied === "invite" ? "Copied" : "Copy"}
             </button>
           </div>
@@ -232,7 +238,7 @@
       <select
         class="field compact"
         value={snapshot.max_quality}
-        onchange={(e) => api.setMaxQuality(e.currentTarget.value)}
+        onchange={(e) => api.setMaxQuality(e.currentTarget.value as Quality)}
       >
         <option value="high">Send up to 1080p</option>
         <option value="mid">Send up to 720p</option>

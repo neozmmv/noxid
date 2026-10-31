@@ -46,7 +46,8 @@ to build from a checkout, and `--uninstall`/`-Uninstall`.
 
 ## Build from source
 
-You need Rust 1.91 or newer and Node 22.
+You need Rust 1.91 or newer and [Bun](https://bun.sh) 1.4 or newer. The
+frontend is Svelte 5 in TypeScript.
 
 Linux build dependencies (Debian and Ubuntu):
 
@@ -60,9 +61,10 @@ Windows needs the MSVC build tools and [NASM](https://www.nasm.us/) on `PATH`.
 
 ```sh
 cd app
-npm ci
-npx tauri dev          # run the app
-npx tauri build        # build installers into target/release/bundle
+bun install
+bun run tauri dev      # run the app
+bun run check          # type-check the frontend
+bun run tauri build    # build installers into target/release/bundle
 ```
 
 ## Layout

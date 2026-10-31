@@ -98,13 +98,13 @@ function Get-LocalInstaller {
     if (-not (Test-Path (Join-Path $root 'app\package.json'))) {
         throw '-Local has to be run from the scripts folder of a Noxid checkout'
     }
-    foreach ($tool in 'cargo', 'npm') {
+    foreach ($tool in 'cargo', 'bun') {
         if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
             throw "-Local needs $tool on PATH"
         }
     }
     Push-Location (Join-Path $root 'app')
-    # npm and tauri report progress on stderr. Windows PowerShell turns that into
+    # bun and tauri report progress on stderr. Windows PowerShell turns that into
     # error records, and under 'Stop' the first one would abort a healthy build
     # whenever output is redirected; exit codes are what decide failure here.
     $ErrorActionPreference = 'Continue'
@@ -112,10 +112,10 @@ function Get-LocalInstaller {
         Info 'installing frontend dependencies'
         # Straight to the console: anything left on the pipeline would become
         # part of this function's return value.
-        npm ci | Out-Host
-        if ($LASTEXITCODE -ne 0) { throw 'npm ci failed' }
+        bun install --frozen-lockfile | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw 'bun install failed' }
         Info 'building the installer (the first build takes a while)'
-        npx tauri build --bundles nsis | Out-Host
+        bun run tauri build --bundles nsis | Out-Host
         if ($LASTEXITCODE -ne 0) { throw 'tauri build failed' }
     }
     finally {

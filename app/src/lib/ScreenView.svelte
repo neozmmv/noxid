@@ -1,25 +1,26 @@
-<script>
+<script lang="ts">
   import { onMount } from "svelte";
-  import { onFrames } from "./api.js";
-  import { I420Renderer } from "./renderer.js";
+  import { onFrames } from "./api";
+  import { I420Renderer } from "./renderer";
+  import type { Frame } from "./types";
 
   // Draws one participant's screen share. Frames arrive over the socket as
   // fast as they decode; drawing happens at most once per display refresh.
-  let { id, label } = $props();
+  let { id, label }: { id: string; label: string } = $props();
 
-  let canvas;
-  let failed = $state(null);
+  let canvas: HTMLCanvasElement;
+  let failed = $state<string | null>(null);
   let waiting = $state(true);
 
   onMount(() => {
-    let renderer;
+    let renderer: I420Renderer;
     try {
       renderer = new I420Renderer(canvas);
     } catch (e) {
       failed = String(e);
       return;
     }
-    let pending = null;
+    let pending: Frame | null = null;
     let scheduled = 0;
     const draw = () => {
       scheduled = 0;
