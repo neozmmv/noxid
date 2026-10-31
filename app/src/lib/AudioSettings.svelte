@@ -211,7 +211,7 @@
   }
 
   select.field {
-    background: var(--ink);
+    background-color: var(--ink);
   }
 
   .sensitivity {

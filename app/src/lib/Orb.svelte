@@ -112,7 +112,7 @@
   .orb {
     display: grid;
     justify-items: center;
-    gap: 0.35rem;
+    gap: 0.75rem;
     padding: 0.5rem;
     border: 0;
     background: none;
@@ -152,6 +152,14 @@
 
   .small .face {
     --size: 56px;
+  }
+
+  .orb.small {
+    gap: 0.85rem;
+  }
+
+  .small.focused .face {
+    outline-offset: 6px;
   }
 
   .small.speaking .face {

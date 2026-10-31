@@ -77,6 +77,27 @@ button {
   background: var(--dusk);
 }
 
+/* Selects draw their own arrow: the native one ignores the rounded corners
+   and ends up pressed against the edge. Two gradient triangles make the
+   chevron, which needs no image (the app's CSP allows none). */
+select.field {
+  appearance: none;
+  padding-right: 2.4rem;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--mist) 50%),
+    linear-gradient(135deg, var(--mist) 50%, transparent 50%);
+  background-position:
+    right 1.15rem center,
+    right 0.8rem center;
+  background-size: 0.35rem 0.35rem;
+  background-repeat: no-repeat;
+}
+
+select.field option {
+  background: var(--dusk);
+  color: var(--moon);
+}
+
 .field::placeholder {
   color: var(--mist);
   opacity: 0.7;

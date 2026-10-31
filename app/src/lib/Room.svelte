@@ -446,7 +446,7 @@
 
   .compact {
     width: auto;
-    padding: 0.5rem 0.7rem;
+    padding: 0.5rem 2.4rem 0.5rem 0.9rem;
     border-radius: 999px;
   }
 </style>
