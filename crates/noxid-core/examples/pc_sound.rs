@@ -24,8 +24,8 @@ async fn main() -> anyhow::Result<()> {
             break;
         };
         count += 1;
-        for chunk in frame.data.chunks_exact(4) {
-            peak = peak.max(f32::from_le_bytes(chunk.try_into().unwrap()).abs());
+        for sample in frame.data.as_chunks::<4>().0 {
+            peak = peak.max(f32::from_le_bytes(*sample).abs());
         }
     }
     println!("{count} frames of 20 ms in 3 s, peak {peak:.3}");
