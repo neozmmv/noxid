@@ -85,6 +85,9 @@ async fn handshake(
     token: &str,
 ) -> Option<tokio_tungstenite::WebSocketStream<TcpStream>> {
     let wanted = format!("token={token}");
+    // The signature is tungstenite's handshake callback, so the large error
+    // type is theirs to choose, not ours to box.
+    #[allow(clippy::result_large_err, reason = "signature fixed by tungstenite's Callback")]
     let check = |request: &Request, response: Response| -> Result<Response, ErrorResponse> {
         let ok = request
             .uri()
