@@ -107,6 +107,13 @@
       await api.shareScreen(null);
       return;
     }
+    await pickShare();
+  }
+
+  // Also how a share in progress moves to another screen or window: the
+  // backend swaps the source and viewers keep watching.
+  async function pickShare() {
+    error = null;
     try {
       const targets = await api.displays();
       const only = targets.length === 1 ? targets[0] : undefined;
@@ -292,6 +299,9 @@
     <button class="button" aria-pressed={snapshot.sharing} onclick={toggleShare}>
       {snapshot.sharing ? "Stop sharing" : "Share screen"}
     </button>
+    {#if snapshot.sharing}
+      <button class="button quiet" onclick={pickShare}>Change window</button>
+    {/if}
     <label>
       <span class="visually-hidden">Highest quality you send</span>
       <select

@@ -554,10 +554,19 @@ impl Node {
         Ok(())
     }
 
-    /// Starts sharing `screen`, or stops sharing with `None`.
+    /// Starts sharing `screen`, or stops sharing with `None`. Switching from
+    /// one screen or window to another mid-share keeps the same broadcast,
+    /// so viewers carry on watching instead of losing the share and finding
+    /// it again.
     pub fn share_screen(&self, screen: Option<Screen>) -> Result<()> {
         let mut local = self.inner.local.lock().unwrap();
+        let switching = screen.is_some() && local.screen_broadcast.is_some();
         local.screen = screen;
+        drop(local);
+        if switching {
+            return self.inner.restart_share();
+        }
+        let mut local = self.inner.local.lock().unwrap();
         let result = if local.voice.is_some() {
             self.inner.apply_screen(&mut local)
         } else {
