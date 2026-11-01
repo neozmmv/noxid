@@ -149,6 +149,9 @@
     {#if room.is_coordinator}
       <button class="button quiet" onclick={() => (showInvite = !showInvite)} aria-expanded={showInvite}>
         Invite people
+        <svg class="chevron" class:open={showInvite} viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path fill="currentColor" d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6 1.4-1.4Z" />
+        </svg>
       </button>
     {/if}
   </header>
@@ -451,6 +454,15 @@
     font-size: var(--step-3);
     font-weight: 700;
     letter-spacing: -0.015em;
+  }
+
+  .chevron {
+    margin-right: -0.3rem;
+    transition: transform 150ms ease;
+  }
+
+  .chevron.open {
+    transform: rotate(180deg);
   }
 
   .count {
