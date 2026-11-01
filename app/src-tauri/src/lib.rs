@@ -217,25 +217,32 @@ async fn set_mic(state: tauri::State<'_, AppState>, on: bool) -> CommandResult<(
 struct DisplayInfo {
     id: String,
     name: String,
+    app: String,
+    kind: media::Kind,
     width: u32,
     height: u32,
 }
 
+/// Everything that can be shared: the displays first, then the windows.
 #[tauri::command]
 async fn displays() -> CommandResult<Vec<DisplayInfo>> {
-    let displays = media::displays().await.map_err(err)?;
-    Ok(displays
+    let mut all = media::displays().await.map_err(err)?;
+    all.extend(media::windows().await);
+    Ok(all
         .into_iter()
         .map(|d| DisplayInfo {
             id: d.id,
             name: d.name,
+            app: d.app,
+            kind: d.kind,
             width: d.size.width,
             height: d.size.height,
         })
         .collect())
 }
 
-/// Starts sharing the display with this id, or stops sharing with `None`.
+/// Starts sharing the display or window with this id, or stops sharing with
+/// `None`.
 #[tauri::command]
 async fn share_screen(state: tauri::State<'_, AppState>, display: Option<String>) -> CommandResult<()> {
     let node = node(&state).await?;

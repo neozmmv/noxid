@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { getCurrentWindow } from "@tauri-apps/api/window";
   import { api } from "./api";
+  import { setFullscreen as goFullscreen, view } from "./fullscreen.svelte";
   import ScreenView from "./ScreenView.svelte";
   import type { MemberView, Quality } from "./types";
 
@@ -12,26 +12,26 @@
     onquality: (value: string) => void;
     /** For our own share: whether the PC's sound goes out with it. */
     sendingSound: boolean;
+    /** Right-click on the picture. */
+    onmenu: (event: MouseEvent) => void;
   }
 
-  let { member, quality, onquality, sendingSound }: Props = $props();
+  let { member, quality, onquality, sendingSound, onmenu }: Props = $props();
 
-  let fullscreen = $state(false);
+  const fullscreen = $derived(view.fullscreen);
   // In fullscreen the controls get out of the way until the pointer moves.
   let idle = $state(false);
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
 
-  async function setFullscreen(on: boolean) {
-    fullscreen = on;
-    // The window itself goes fullscreen, not just the element: WebKitGTK and
-    // WebView2 disagree on element fullscreen, and this behaves the same on both.
-    try {
-      await getCurrentWindow().setFullscreen(on);
-    } catch {
-      // Without the window permission the stage still fills the window.
-    }
-    wake();
+  function setFullscreen(on: boolean) {
+    goFullscreen(on);
   }
+
+  // Coming out of hiding whenever fullscreen changes, whoever changed it.
+  $effect(() => {
+    void view.fullscreen;
+    wake();
+  });
 
   function wake() {
     idle = false;
@@ -48,7 +48,7 @@
   // the app is never stuck in it.
   $effect(() => () => {
     clearTimeout(idleTimer);
-    if (fullscreen) getCurrentWindow().setFullscreen(false).catch(() => {});
+    if (view.fullscreen) goFullscreen(false);
   });
 
   const percent = $derived(Math.round(member.screen_volume * 100));
@@ -66,6 +66,10 @@
   class:idle
   onpointermove={wake}
   ondblclick={() => setFullscreen(!fullscreen)}
+  oncontextmenu={(e) => {
+    e.preventDefault();
+    onmenu(e);
+  }}
   aria-label={member.is_self ? "Your screen" : `${member.name}'s screen`}
 >
   <div class="picture">
@@ -105,7 +109,7 @@
           <input
             type="range"
             min="0"
-            max="200"
+            max="100"
             step="5"
             value={percent}
             disabled={member.screen_muted}
@@ -155,7 +159,11 @@
   }
 
   .picture {
+    position: relative;
     min-height: 0;
+    overflow: hidden;
+    border-radius: 10px;
+    background: #000;
   }
 
   .bar {
@@ -228,6 +236,7 @@
   .fullscreen .picture {
     grid-row: 1;
     grid-column: 1;
+    border-radius: 0;
   }
 
   .fullscreen .bar {

@@ -13,8 +13,8 @@ mod node;
 pub mod room;
 
 pub use node::{
-    KnockView, MAX_VOLUME, MemberView, Node, NodeConfig, Notice, PeerAudio, PeerView, QualityMode, RoomView,
-    Snapshot, Stream,
+    KnockView, MAX_SCREEN_VOLUME, MAX_VOLUME, MemberView, Node, NodeConfig, Notice, PeerAudio, PeerView, QualityMode,
+    RoomView, Snapshot, Stream,
 };
 
 /// Where a member publishes their voice. Named by endpoint id so a subscriber

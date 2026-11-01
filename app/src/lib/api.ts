@@ -54,7 +54,9 @@ export const onLevels = (handler: (l: Levels) => void): Promise<UnlistenFn> =>
 const HEADER_LEN = 44;
 
 type Sink = (frame: Frame) => void;
-const sinks = new Map<string, Sink>();
+// Several views can show the same share (a thumbnail while the stage is
+// switching, say), so each id has a set of drawers.
+const sinks = new Map<string, Set<Sink>>();
 const latest = new Map<string, Frame>();
 
 function hex(bytes: Uint8Array): string {
@@ -82,7 +84,7 @@ export async function connectFrames(): Promise<void> {
         data: new Uint8Array(buffer, HEADER_LEN),
       };
       latest.set(id, frame);
-      sinks.get(id)?.(frame);
+      for (const sink of sinks.get(id) ?? []) sink(frame);
     };
     // The backend restarts the socket server with the app, never mid-run, so
     // a drop is a hiccup worth one quiet retry.
@@ -94,10 +96,13 @@ export async function connectFrames(): Promise<void> {
 
 /** Registers the drawer for one participant's frames. Returns the unsubscribe. */
 export function onFrames(id: string, sink: Sink): () => void {
-  sinks.set(id, sink);
+  let set = sinks.get(id);
+  if (!set) sinks.set(id, (set = new Set()));
+  set.add(sink);
   const last = latest.get(id);
   if (last) sink(last);
   return () => {
-    if (sinks.get(id) === sink) sinks.delete(id);
+    set.delete(sink);
+    if (set.size === 0) sinks.delete(id);
   };
 }

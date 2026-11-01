@@ -20,7 +20,7 @@ use tokio::sync::{broadcast, oneshot, watch};
 use tracing::{info, warn};
 
 use crate::admin::{self, ADMIN_ALPN, AdminHandler};
-use crate::audio::{self, MicMeter, SystemAudio};
+use crate::audio::{self, SystemAudio, Voice};
 use crate::gate::MemberGate;
 use crate::media::{self, Mic, Quality, Screen};
 use crate::room::{self, Code, Member, Room};
@@ -33,8 +33,12 @@ const ONLINE_TIMEOUT: Duration = Duration::from_secs(10);
 /// can knock, so this bounds what they can make the coordinator hold open.
 const MAX_PENDING_KNOCKS: usize = 8;
 
-/// The loudest a participant can be turned up, as a gain.
+/// The loudest a participant's voice can be turned up, as a gain.
 pub const MAX_VOLUME: f32 = 2.0;
+
+/// The loudest a share's sound can be turned up. Not above 1.0: the PC's sound
+/// arrives at full scale already, and playback cannot amplify.
+pub const MAX_SCREEN_VOLUME: f32 = 1.0;
 
 /// How the receiver picks a participant's screen share rendition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -188,9 +192,12 @@ struct Local {
     output_device: Option<String>,
     screen: Option<Screen>,
     screen_audio: bool,
-    /// Measures our own voice while the mic is on in a room, or while a mic
-    /// test is running.
-    meter: Option<MicMeter>,
+    /// The open microphone and the device it was opened on. Open while the
+    /// mic is on in a room, or while a mic test is running; it also measures
+    /// our own level.
+    mic: Option<(Option<String>, Voice)>,
+    /// Whether the voice broadcast is carrying `mic` right now.
+    mic_published: bool,
     /// Whether the audio settings want a live mic level outside a call.
     mic_test: bool,
     /// Whether the mic was on when we deafened, to put it back afterwards.
@@ -267,7 +274,8 @@ impl Node {
                 output_device: config.output_device,
                 screen: None,
                 screen_audio: audio::system_audio_supported(),
-                meter: None,
+                mic: None,
+                mic_published: false,
                 mic_test: false,
                 mic_before_deafen: None,
             }),
@@ -346,8 +354,8 @@ impl Node {
             .iter()
             .map(|(id, level)| (id.to_string(), *level))
             .collect();
-        if let Some(meter) = &self.inner.local.lock().unwrap().meter {
-            levels.insert(self.id().to_string(), meter.level());
+        if let Some((_, mic)) = &self.inner.local.lock().unwrap().mic {
+            levels.insert(self.id().to_string(), mic.level());
         }
         levels
     }
@@ -587,10 +595,15 @@ impl Node {
         self.inner.bump();
     }
 
-    /// Sets how loud we hear one of a participant's sounds. `volume` is a gain
-    /// clamped to `0.0..=MAX_VOLUME`; muting keeps the volume for unmuting.
+    /// Sets how loud we hear one of a participant's sounds. `volume` is a gain,
+    /// clamped to `MAX_VOLUME` for a voice and `MAX_SCREEN_VOLUME` for a
+    /// share; muting keeps the volume for unmuting.
     pub fn set_peer_audio(&self, id: EndpointId, stream: Stream, volume: f32, muted: bool) {
-        let volume = volume.clamp(0.0, MAX_VOLUME);
+        let max = match stream {
+            Stream::Voice => MAX_VOLUME,
+            Stream::Screen => MAX_SCREEN_VOLUME,
+        };
+        let volume = volume.clamp(0.0, max);
         let mut prefs = self.inner.audio_prefs.lock().unwrap();
         let entry = prefs.entry(id).or_default();
         match stream {
@@ -689,31 +702,69 @@ impl Inner {
             .publish(path)
             .map_err(|e| anyhow::anyhow!("{e:#}"))?;
         local.voice = Some(voice);
+        local.mic_published = false;
         self.apply_mic(&mut local);
         self.apply_screen(&mut local)
     }
 
-    /// Makes the published mic and the meter match `local`.
+    /// Makes the open microphone and what the voice broadcast carries match
+    /// `local`.
     fn apply_mic(&self, local: &mut Local) {
-        if let Some(voice) = &local.voice {
-            match local.mic_on {
-                true => media::set_mic(voice, self.mic, local.mic_device.as_deref()),
-                false => media::mute_mic(voice),
+        let live = local.voice.is_some() && local.mic_on;
+        match self.mic {
+            Mic::Device => {
+                // Kept open across changes that leave the device alone, so the
+                // gain it has settled on is not thrown away.
+                let wanted = live || local.mic_test;
+                let same_device =
+                    matches!(&local.mic, Some((device, _)) if *device == local.mic_device);
+                if !wanted || !same_device {
+                    local.mic = None;
+                    local.mic_published = false;
+                }
+                if wanted && local.mic.is_none() {
+                    match Voice::start(local.mic_device.as_deref()) {
+                        Ok(mic) => local.mic = Some((local.mic_device.clone(), mic)),
+                        Err(e) => {
+                            warn!("microphone unavailable: {e:#}");
+                            if live {
+                                self.notice(Notice::Error(format!(
+                                    "The microphone could not be opened: {e:#}"
+                                )));
+                            }
+                        }
+                    }
+                }
+                let Some(voice) = &local.voice else {
+                    local.mic_published = false;
+                    return;
+                };
+                match (&local.mic, live) {
+                    (Some((_, mic)), true) => {
+                        if !local.mic_published {
+                            let clock = *voice.clock();
+                            voice.audio().set(mic.source(move || clock.now().into()));
+                            local.mic_published = true;
+                        }
+                    }
+                    (mic, _) => {
+                        if let Some((_, mic)) = mic {
+                            mic.detach();
+                        }
+                        media::mute_mic(voice);
+                        local.mic_published = false;
+                    }
+                }
             }
-        }
-        // The meter runs while the mic is live in a call, or for a mic test.
-        // It is a second reader of the same mic; a device that refuses one
-        // costs only the indicator.
-        let wanted = (local.voice.is_some() && local.mic_on) || local.mic_test;
-        local.meter = None;
-        if wanted {
-            local.meter = match self.mic {
-                Mic::Device => MicMeter::start(local.mic_device.as_deref())
-                    .inspect_err(|e| warn!("mic level meter unavailable: {e:#}"))
-                    .ok(),
-                #[cfg(feature = "test-source")]
-                Mic::Test => None,
-            };
+            #[cfg(feature = "test-source")]
+            Mic::Test => {
+                if let Some(voice) = &local.voice {
+                    match live {
+                        true => media::set_mic(voice, Mic::Test, None),
+                        false => media::mute_mic(voice),
+                    }
+                }
+            }
         }
     }
 

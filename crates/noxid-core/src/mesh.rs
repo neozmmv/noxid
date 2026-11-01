@@ -37,6 +37,12 @@ const BACKOFF_MAX: Duration = Duration::from_secs(10);
 /// How often a connected peer's tracks and stats are refreshed.
 const REFRESH: Duration = Duration::from_millis(500);
 
+/// What a voice at 100% plays at. iroh-live's playback cannot amplify (its
+/// volume stops at 1.0), so voices are played at half scale and turning
+/// someone up to `MAX_VOLUME` is what reaches full scale. The sender makes up
+/// the difference: its mic goes out 6 dB hotter (see `audio::voice`).
+const VOICE_HEADROOM: f32 = 1.0 / crate::MAX_VOLUME;
+
 /// The gain a "muted" voice plays at: -80 dB, inaudible, but enough for the
 /// level meter to keep working so the speaking indicator still shows.
 const MUTED_GAIN: f32 = 1e-4;
@@ -283,7 +289,7 @@ async fn voice_loop(inner: &Inner, id: EndpointId, session: &MoqSession) {
             // The track's peak is measured after its volume, so a muted
             // participant would stop showing as speaking. Muting plays at an
             // inaudible gain instead of zero, and the meter divides it back out.
-            let gain = gain.max(MUTED_GAIN);
+            let gain = (gain * VOICE_HEADROOM).max(MUTED_GAIN);
             let level = match &audio {
                 Some(track) => {
                     if gain != applied_gain {

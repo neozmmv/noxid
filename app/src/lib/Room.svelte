@@ -4,6 +4,9 @@
   import AudioSettings from "./AudioSettings.svelte";
   import Orb from "./Orb.svelte";
   import PeerMenu from "./PeerMenu.svelte";
+  import ScreenMenu from "./ScreenMenu.svelte";
+  import ScreenView from "./ScreenView.svelte";
+  import SharePicker from "./SharePicker.svelte";
   import Stage from "./Stage.svelte";
 
   let { snapshot }: { snapshot: Snapshot } = $props();
@@ -21,6 +24,8 @@
   const focused = $derived(
     sharers.find((m) => m.id === chosen) ?? sharers.find((m) => !m.is_self) ?? sharers[0] ?? null,
   );
+  // Every other share, as a thumbnail beside the stage.
+  const others = $derived(sharers.filter((m) => m.id !== focused?.id));
 
   // Receiver-side quality: the share on stage follows the link (adaptive,
   // up to the top rung), the others are pinned to the smallest rung since they
@@ -54,9 +59,26 @@
     };
   }
 
-  // Right-click menu on a participant.
+  // Right-click menus: on a participant, and on a shared screen.
   let menu = $state<{ id: string; x: number; y: number } | null>(null);
   const menuMember = $derived(menu ? members.find((m) => m.id === menu!.id) : undefined);
+  let screenMenu = $state<{ id: string; x: number; y: number } | null>(null);
+  const screenMenuMember = $derived(screenMenu ? sharers.find((m) => m.id === screenMenu!.id) : undefined);
+
+  function openScreenMenu(id: string, event: MouseEvent) {
+    event.preventDefault();
+    menu = null;
+    screenMenu = { id, x: event.clientX, y: event.clientY };
+  }
+
+  function thumbKey(event: KeyboardEvent, id: string) {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      chosen = id;
+    }
+  }
+
+  const shareLabel = (m: MemberView) => (m.is_self ? "Your screen" : `${m.name}'s screen`);
 
   let showAudio = $state(false);
 
@@ -75,7 +97,7 @@
     setTimeout(() => (copied = null), 1500);
   }
 
-  // Screen sharing.
+  // Screen sharing: a whole screen or one window, picked from a list.
   let picking = $state<DisplayInfo[] | null>(null);
   let error = $state<string | null>(null);
 
@@ -86,14 +108,14 @@
       return;
     }
     try {
-      const displays = await api.displays();
-      const only = displays.length === 1 ? displays[0] : undefined;
+      const targets = await api.displays();
+      const only = targets.length === 1 ? targets[0] : undefined;
       if (only) {
         await api.shareScreen(only.id);
-      } else if (displays.length === 0) {
-        error = "No screen to share was found.";
+      } else if (targets.length === 0) {
+        error = "Nothing to share was found.";
       } else {
-        picking = displays;
+        picking = targets;
       }
     } catch (e) {
       error = String(e);
@@ -167,37 +189,53 @@
     </section>
   {/each}
 
-  {#if focused}
-    <Stage
-      member={focused}
-      quality={qualityChoice(focused)}
-      onquality={(value) => chooseQuality(focused.id, value)}
-      sendingSound={snapshot.screen_audio}
-    />
-  {/if}
+  <div class="main">
+    {#if focused}
+      <div class="screens" class:with-others={others.length > 0}>
+        <Stage
+          member={focused}
+          quality={qualityChoice(focused)}
+          onquality={(value) => chooseQuality(focused.id, value)}
+          sendingSound={snapshot.screen_audio}
+          onmenu={(e) => openScreenMenu(focused.id, e)}
+        />
+        {#if others.length}
+          <div class="others" aria-label="Other shared screens">
+            {#each others as m (m.id)}
+              <div
+                class="thumb"
+                role="button"
+                tabindex="0"
+                aria-label={`Show ${shareLabel(m)} on the big stage`}
+                onclick={() => (chosen = m.id)}
+                onkeydown={(e) => thumbKey(e, m.id)}
+                oncontextmenu={(e) => openScreenMenu(m.id, e)}
+              >
+                <div class="thumb-picture"><ScreenView id={m.id} label={shareLabel(m)} /></div>
+                <span>{shareLabel(m)}</span>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {/if}
 
-  <section class="people" aria-label="People in the room">
-    {#each members as member (member.id)}
-      <Orb
-        {member}
-        micOn={snapshot.mic_on}
-        small={!!focused}
-        focused={focused?.id === member.id}
-        onselect={sharers.some((s) => s.id === member.id) ? () => (chosen = member.id) : null}
-        onmenu={(e) => (menu = { id: member.id, x: e.clientX, y: e.clientY })}
-      />
-    {/each}
-  </section>
-
-  {#if picking}
-    <section class="picker" aria-label="Choose a screen">
-      <span>Share which screen?</span>
-      {#each picking as d (d.id)}
-        <button class="button" onclick={() => share(d.id)}>{d.name} ({d.width}×{d.height})</button>
+    <section class="people" aria-label="People in the room">
+      {#each members as member (member.id)}
+        <Orb
+          {member}
+          micOn={snapshot.mic_on}
+          small={!!focused}
+          focused={focused?.id === member.id}
+          onselect={sharers.some((s) => s.id === member.id) ? () => (chosen = member.id) : null}
+          onmenu={(e) => {
+            screenMenu = null;
+            menu = { id: member.id, x: e.clientX, y: e.clientY };
+          }}
+        />
       {/each}
-      <button class="button quiet" onclick={() => (picking = null)}>Cancel</button>
     </section>
-  {/if}
+  </div>
 
   {#if error}
     <p class="error" role="alert">{error}</p>
@@ -289,21 +327,105 @@
   {/key}
 {/if}
 
+{#if screenMenu && screenMenuMember}
+  {#key screenMenu}
+    <ScreenMenu
+      member={screenMenuMember}
+      x={screenMenu.x}
+      y={screenMenu.y}
+      onStage={focused?.id === screenMenuMember.id}
+      quality={qualityChoice(screenMenuMember)}
+      onquality={(value) => chooseQuality(screenMenuMember.id, value)}
+      onstage={() => (chosen = screenMenuMember.id)}
+      onstop={() => api.shareScreen(null)}
+      onclose={() => (screenMenu = null)}
+    />
+  {/key}
+{/if}
+
+{#if picking}
+  <SharePicker targets={picking} onpick={share} onclose={() => (picking = null)} />
+{/if}
+
 {#if showAudio}
   <AudioSettings {snapshot} onclose={() => (showAudio = false)} />
 {/if}
 
 <style>
+  /* A column whose only flexible part is .main: banners, the invite panel and
+     errors come and go above and below it without shifting anything, and
+     nothing inside .main can grow past the window. */
   .room {
     height: 100%;
-    display: grid;
-    grid-template-rows: auto auto auto 1fr auto auto auto;
+    display: flex;
+    flex-direction: column;
     padding: 1.25rem 1.5rem 1rem;
+    gap: 0.9rem;
+    overflow: hidden;
+  }
+
+  .room > :global(*) {
+    flex-shrink: 0;
+  }
+
+  .room > .main {
+    flex: 1 1 0;
+    min-height: 0;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr);
     gap: 0.9rem;
   }
 
-  .room.staged {
-    grid-template-rows: auto auto auto minmax(0, 1fr) auto auto auto;
+  .staged > .main {
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  .screens {
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.9rem;
+  }
+
+  .screens.with-others {
+    grid-template-columns: minmax(0, 1fr) clamp(9rem, 18vw, 15rem);
+  }
+
+  .others {
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .thumb {
+    display: grid;
+    gap: 0.35rem;
+    flex-shrink: 0;
+    cursor: pointer;
+    border-radius: 10px;
+  }
+
+  .thumb-picture {
+    position: relative;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    border-radius: 10px;
+    background: #000;
+    border: 2px solid transparent;
+  }
+
+  .thumb:hover .thumb-picture {
+    border-color: var(--lamp);
+  }
+
+  .thumb span {
+    font-size: var(--step--1);
+    color: var(--mist);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   header {
@@ -391,13 +513,6 @@
   .staged .people {
     align-content: start;
     gap: 0.5rem 1.25rem;
-  }
-
-  .picker {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.6rem;
   }
 
   .error {

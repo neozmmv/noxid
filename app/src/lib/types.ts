@@ -81,7 +81,11 @@ export type Notice =
 
 export interface DisplayInfo {
   id: string;
+  /** The display's name, or the window's title. */
   name: string;
+  /** The application a window belongs to; empty for a display. */
+  app: string;
+  kind: "display" | "window";
   width: number;
   height: number;
 }

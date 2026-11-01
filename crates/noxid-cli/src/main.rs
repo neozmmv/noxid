@@ -36,7 +36,7 @@ enum Command {
         #[arg(long)]
         stats: bool,
     },
-    /// List the displays this machine can share.
+    /// List the displays and windows this machine can share.
     Devices,
     /// Try to subscribe to a node's media directly, bypassing membership.
     /// Should fail unless this node is in their room: it checks the gate.
@@ -64,7 +64,7 @@ commands:
   input <id|default>        pick the microphone
   output <id|default>       pick where others are heard
   pcsound <on|off>          include the PC's sound when sharing
-  volume <who> <voice|screen> <0-200> [muted]   how loud you hear someone
+  volume <who> <voice|screen> <percent> [muted]   how loud you hear someone (voice up to 200, screen up to 100)
   status                    print the room
   quit";
 
@@ -106,6 +106,16 @@ async fn devices() -> Result<()> {
         println!(
             "{index}: {} ({}x{})\n   id: {}",
             d.name, d.size.width, d.size.height, d.id
+        );
+    }
+    let windows = media::windows().await;
+    if !windows.is_empty() {
+        println!("\nwindows (share by id):");
+    }
+    for w in windows {
+        println!(
+            "  {} [{}] ({}x{})\n   id: {}",
+            w.name, w.app, w.size.width, w.size.height, w.id
         );
     }
     Ok(())

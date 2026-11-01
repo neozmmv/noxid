@@ -131,12 +131,24 @@ pub fn ladder(source: Size, max: Quality) -> Vec<VideoRendition> {
         .collect()
 }
 
-/// A display that can be shared.
+/// Whether a share shows a whole display or a single window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Kind {
+    Display,
+    Window,
+}
+
+/// A display or window that can be shared.
 #[derive(Debug, Clone)]
 pub struct Display {
     pub id: String,
+    /// The display's name, or the window's title.
     pub name: String,
+    /// The application a window belongs to; empty for a display.
+    pub app: String,
     pub size: Size,
+    pub kind: Kind,
 }
 
 /// The displays this machine offers, in the order an index selects them.
@@ -147,14 +159,60 @@ pub async fn displays() -> Result<Vec<Display>> {
         .map(|d| Display {
             id: d.id,
             name: d.name,
+            app: String::new(),
             size: Size::new(d.width, d.height),
+            kind: Kind::Display,
         })
         .collect())
 }
 
+/// Smaller than this, a "window" is a minimized one (Windows reports those as
+/// a title-bar stub) or a tool strip, and neither captures as anything useful.
+const MIN_WINDOW: Size = Size {
+    width: 200,
+    height: 120,
+};
+
+/// The windows that can be shared on their own. Left out: Noxid's (sharing the
+/// call into itself shows nobody anything new), minimized ones, and the
+/// desktop itself, which is what sharing the display is for.
+///
+/// Windows and X11 only. On Wayland, and anywhere else listing fails, the
+/// list is empty and only whole displays are offered.
+pub async fn windows() -> Vec<Display> {
+    let own = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().to_lowercase()))
+        .unwrap_or_default();
+    match capture::windows().await {
+        Ok(windows) => windows
+            .into_iter()
+            .filter(|w| w.app.to_lowercase() != own)
+            .filter(|w| w.width >= MIN_WINDOW.width && w.height >= MIN_WINDOW.height)
+            .filter(|w| !(w.app.eq_ignore_ascii_case("explorer") && w.title == "Program Manager"))
+            .map(|w| Display {
+                id: w.id,
+                name: w.title,
+                app: w.app,
+                size: Size::new(w.width, w.height),
+                kind: Kind::Window,
+            })
+            .collect(),
+        Err(e) => {
+            tracing::debug!("windows cannot be listed here: {e:#}");
+            Vec::new()
+        }
+    }
+}
+
 /// Finds a display by index, exact id, or part of its name. `None` is the
-/// first display.
+/// first display. A window is found by its exact id.
 pub async fn find_display(spec: Option<&str>) -> Result<Display> {
+    if let Some(spec) = spec
+        && let Some(window) = windows().await.into_iter().find(|w| w.id == spec)
+    {
+        return Ok(window);
+    }
     let displays = displays().await?;
     let found = match spec {
         None => displays.into_iter().next(),
@@ -196,7 +254,10 @@ impl Screen {
         match self {
             Screen::Display(display) => {
                 let mut config = capture::Config::default();
-                config.source = capture::Source::Display(Some(display.id.clone()));
+                config.source = match display.kind {
+                    Kind::Display => capture::Source::Display(Some(display.id.clone())),
+                    Kind::Window => capture::Source::Window(display.id.clone()),
+                };
                 VideoSource::Capture(config)
             }
             #[cfg(feature = "test-source")]

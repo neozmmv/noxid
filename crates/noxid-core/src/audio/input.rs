@@ -10,10 +10,8 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
-/// The layout a stream delivers. Only the Linux monitor capture reads it; the
-/// meter needs nothing but the samples.
+/// The layout a stream delivers.
 #[derive(Debug, Clone, Copy)]
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) struct Format {
     pub sample_rate: u32,
     pub channels: u32,
@@ -40,6 +38,15 @@ pub(crate) fn find_input(id: Option<&str>) -> Result<cpal::Device> {
                 .with_context(|| format!("input device {id:?} not found"))
         }
     }
+}
+
+/// The format [`open`] will deliver from `device`.
+pub(crate) fn format(device: &cpal::Device) -> Result<Format> {
+    let config = device.default_input_config()?.config();
+    Ok(Format {
+        sample_rate: config.sample_rate,
+        channels: u32::from(config.channels),
+    })
 }
 
 /// Opens `device` and calls `on_data` with every buffer, as interleaved `f32`.

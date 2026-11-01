@@ -1,19 +1,20 @@
-//! Audio beyond what iroh-live does for us: choosing devices, metering our own
-//! microphone, and capturing the PC's sound for a screen share.
+//! Audio beyond what iroh-live does for us: choosing devices, processing and
+//! metering our own microphone, and capturing the PC's sound for a screen
+//! share.
 
 mod input;
 #[cfg(windows)]
 mod loopback;
-mod meter;
 mod pcm;
 mod system;
+mod voice;
 
 use anyhow::Result;
 use serde::Serialize;
 
-pub use meter::MicMeter;
 pub(crate) use pcm::pcm_source;
 pub use system::{SystemAudio, system_audio_supported};
+pub use voice::Voice;
 
 /// An input or output device, as the device pickers show it.
 #[derive(Debug, Clone, Serialize)]

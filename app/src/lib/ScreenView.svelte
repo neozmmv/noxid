@@ -52,28 +52,32 @@
 </div>
 
 <style>
+  /* The canvas is taken out of layout and letterboxed with object-fit, so a
+     1080p picture can never push the box it sits in (and everything after
+     it) out of the window. The box's size comes from the layout alone. */
   .screen {
     position: relative;
     width: 100%;
     height: 100%;
+    min-height: 0;
+    overflow: hidden;
     display: grid;
     place-items: center;
-    min-height: 0;
   }
 
   canvas {
-    max-width: 100%;
-    max-height: 100%;
-    width: auto;
-    height: auto;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
     object-fit: contain;
-    border-radius: 8px;
-    background: #000;
   }
 
   .overlay {
-    position: absolute;
+    position: relative;
     margin: 0;
+    padding: 0 1rem;
     color: var(--mist);
+    text-align: center;
   }
 </style>

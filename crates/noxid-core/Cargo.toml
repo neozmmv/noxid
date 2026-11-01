@@ -22,10 +22,13 @@ getrandom = "0.4"
 dirs = "7"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # The same releases moq-audio and iroh-live link, so nothing builds twice:
-# cpal for our own mic meter and the Linux monitor capture, moq-net for media
+# cpal for our own microphone and the Linux monitor capture, moq-net for media
 # timestamps, n0-future for the PCM stream handed to the publisher.
 cpal = "0.18"
 moq-net = "0.3"
+# WebRTC's audio processing in pure Rust (moq-audio's echo canceller uses it
+# too): noise suppression and adaptive gain for our microphone.
+sonora = "0.2"
 n0-future = "0.3"
 bytes = "1"
 
