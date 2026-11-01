@@ -32,6 +32,8 @@ export const api = {
   sharePreview: (id: string) => invoke<ArrayBuffer>("share_preview", { id }),
   setMaxQuality: (quality: Quality) => invoke<void>("set_max_quality", { quality }),
   setFramerate: (fps: number) => invoke<void>("set_framerate", { fps }),
+  /** In kbit/s; `null` for the resolution's default. */
+  setBitrate: (kbps: number | null) => invoke<void>("set_bitrate", { kbps }),
   setPeerQuality: (id: string, mode: QualityMode) => invoke<void>("set_peer_quality", { id, mode }),
   audioDevices: () => invoke<AudioDevices>("audio_devices"),
   setMicDevice: (device: string | null) => invoke<void>("set_mic_device", { device }),

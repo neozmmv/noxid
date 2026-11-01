@@ -169,14 +169,54 @@ fn fit(source: Size, height: u32) -> Size {
     Size::new(width & !1, height & !1)
 }
 
-/// The renditions published for a `source`-sized share capped at `max`: every
-/// rung up to and including it. Rungs that collapse to the same size on a small
-/// source are dropped, keeping the smaller name.
-pub fn ladder(source: Size, max: Quality, rate: Framerate) -> Vec<VideoRendition> {
+/// The lowest and highest bitrate a share may be set to, in bits per second.
+pub const MIN_BITRATE: u64 = 200_000;
+pub const MAX_BITRATE: u64 = 20_000_000;
+
+/// What a share sends: the top resolution, the framerate, and the top rung's
+/// bitrate (`None` for that resolution's default).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Outgoing {
+    pub max: Quality,
+    pub rate: Framerate,
+    pub bitrate: Option<u64>,
+}
+
+impl Default for Outgoing {
+    fn default() -> Self {
+        Self {
+            max: Quality::High,
+            rate: Framerate::default(),
+            bitrate: None,
+        }
+    }
+}
+
+impl Outgoing {
+    /// The default bitrate of `quality` at this framerate.
+    pub fn default_bitrate(&self, quality: Quality) -> u64 {
+        (quality.bitrate() as f64 * self.rate.bitrate_scale()) as u64
+    }
+
+    /// What the top rung is encoded at.
+    pub fn top_bitrate(&self) -> u64 {
+        self.bitrate.unwrap_or_else(|| self.default_bitrate(self.max))
+    }
+}
+
+/// The renditions published for a `source`-sized share: every rung up to and
+/// including `send.max`. Rungs that collapse to the same size on a small source
+/// are dropped, keeping the smaller name.
+///
+/// Each rung gets its own default bitrate, except the top one, which gets the
+/// chosen bitrate when there is one. No lower rung is ever given more than the
+/// top: a choice below a lower rung's default pulls that rung down with it.
+pub fn ladder(source: Size, send: Outgoing) -> Vec<VideoRendition> {
+    let top = send.top_bitrate();
     let mut seen = Vec::new();
-    Quality::ALL
+    let mut ladder: Vec<VideoRendition> = Quality::ALL
         .into_iter()
-        .filter(|q| *q <= max)
+        .filter(|q| *q <= send.max)
         .filter_map(|q| {
             let size = fit(source, q.height());
             if seen.contains(&size) {
@@ -186,11 +226,17 @@ pub fn ladder(source: Size, max: Quality, rate: Framerate) -> Vec<VideoRendition
             Some(
                 VideoRendition::new(q.rendition())
                     .with_size(size)
-                    .with_bitrate((q.bitrate() as f64 * rate.bitrate_scale()) as u64)
+                    .with_bitrate(send.default_bitrate(q).min(top))
                     .with_keyframe_interval(KEYFRAME_INTERVAL),
             )
         })
-        .collect()
+        .collect();
+    // The top rung that survived, whatever its name: on a small source the
+    // largest names can collapse away.
+    if let Some(last) = ladder.last_mut() {
+        last.bitrate = Some(top);
+    }
+    ladder
 }
 
 /// Whether a share shows a whole display or a single window.
@@ -416,12 +462,11 @@ impl Mic {
     }
 }
 
-/// Starts sharing `screen`, capped at `max` and sent at `rate`, replacing any
-/// share in progress.
-pub fn share_screen(broadcast: &LocalBroadcast, screen: &Screen, max: Quality, rate: Framerate) -> Result<()> {
+/// Starts sharing `screen` as `send` says, replacing any share in progress.
+pub fn share_screen(broadcast: &LocalBroadcast, screen: &Screen, send: Outgoing) -> Result<()> {
     broadcast
         .video()
-        .set_renditions(screen.source(rate), ladder(screen.size(), max, rate))
+        .set_renditions(screen.source(send.rate), ladder(screen.size(), send))
         .map_err(|e| anyhow::anyhow!("{e:#}"))
 }
 
@@ -439,8 +484,15 @@ pub fn mute_mic(broadcast: &LocalBroadcast) {
 mod tests {
     use super::*;
 
+    fn send(max: Quality) -> Outgoing {
+        Outgoing {
+            max,
+            ..Outgoing::default()
+        }
+    }
+
     fn sizes(source: Size, max: Quality) -> Vec<(String, Size)> {
-        ladder(source, max, Framerate::default())
+        ladder(source, send(max))
             .into_iter()
             .map(|r| (r.name, r.size.unwrap()))
             .collect()
@@ -500,9 +552,45 @@ mod tests {
 
     #[test]
     fn faster_shares_get_more_bits() {
-        let bitrate = |fps: u32| ladder(Size::new(1920, 1080), Quality::High, fps.try_into().unwrap())[2].bitrate;
+        let bitrate = |fps: u32| {
+            let send = Outgoing {
+                rate: fps.try_into().unwrap(),
+                ..send(Quality::High)
+            };
+            ladder(Size::new(1920, 1080), send)[2].bitrate
+        };
         assert!(bitrate(24) < bitrate(30));
         assert!(bitrate(30) < bitrate(60));
+    }
+
+    #[test]
+    fn a_chosen_bitrate_sets_the_top_rung_only() {
+        let bitrates = |bitrate| {
+            let send = Outgoing {
+                bitrate,
+                ..send(Quality::High)
+            };
+            ladder(Size::new(1920, 1080), send)
+                .into_iter()
+                .map(|r| r.bitrate.unwrap())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(bitrates(None), [600_000, 2_500_000, 5_000_000]);
+        assert_eq!(bitrates(Some(8_000_000)), [600_000, 2_500_000, 8_000_000]);
+        // Below the middle rung's default: the middle rung comes down too.
+        assert_eq!(bitrates(Some(2_000_000)), [600_000, 2_000_000, 2_000_000]);
+    }
+
+    #[test]
+    fn a_collapsed_ladder_still_gets_the_chosen_bitrate() {
+        // 1280x720: the 1080 rung collapses into the 720 one.
+        let send = Outgoing {
+            bitrate: Some(4_000_000),
+            ..send(Quality::High)
+        };
+        let ladder = ladder(Size::new(1280, 720), send);
+        assert_eq!(ladder.len(), 2);
+        assert_eq!(ladder[1].bitrate, Some(4_000_000));
     }
 
     #[test]

@@ -274,6 +274,12 @@ async fn set_framerate(state: tauri::State<'_, AppState>, fps: u32) -> CommandRe
     node(&state).await?.set_framerate(rate).map_err(err)
 }
 
+/// The top rung's bitrate in kbit/s, or `None` for the resolution's default.
+#[tauri::command]
+async fn set_bitrate(state: tauri::State<'_, AppState>, kbps: Option<u64>) -> CommandResult<()> {
+    node(&state).await?.set_bitrate(kbps.map(|k| k * 1000)).map_err(err)
+}
+
 #[tauri::command]
 async fn set_max_quality(state: tauri::State<'_, AppState>, quality: Quality) -> CommandResult<()> {
     node(&state).await?.set_max_quality(quality).map_err(err)
@@ -389,6 +395,7 @@ pub fn run() {
             share_screen,
             set_max_quality,
             set_framerate,
+            set_bitrate,
             share_preview,
             set_peer_quality,
             audio_devices,

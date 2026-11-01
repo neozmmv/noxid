@@ -138,6 +138,21 @@
     }
   }
 
+  // Bitrates on offer for the top quality, in kbit/s, around its default.
+  // A choice made earlier stays listed even if it is not one of these.
+  const BITRATES: Record<Quality, number[]> = {
+    low: [300, 400, 800, 1000, 1500],
+    mid: [1500, 2000, 3000, 4000, 6000],
+    high: [3000, 4000, 6000, 8000, 10000, 12000],
+  };
+  const bitrateChoices = $derived.by(() => {
+    const list = [...BITRATES[snapshot.max_quality]];
+    const chosen = snapshot.bitrate === null ? null : snapshot.bitrate / 1000;
+    if (chosen !== null && !list.includes(chosen)) list.push(chosen);
+    return list.sort((a, b) => a - b);
+  });
+  const kbps = (bits: number) => `${Math.round(bits / 1000).toLocaleString("en-US")} kbps`;
+
   let confirmingLeave = $state(false);
 
   async function leave() {
@@ -324,6 +339,22 @@
         <option value={24}>24 fps</option>
         <option value={30}>30 fps</option>
         <option value={60}>60 fps</option>
+      </select>
+    </label>
+    <label>
+      <span class="visually-hidden">Bitrate of the highest quality you send</span>
+      <select
+        class="field compact"
+        value={snapshot.bitrate === null ? "auto" : String(snapshot.bitrate / 1000)}
+        onchange={(e) => {
+          const v = e.currentTarget.value;
+          api.setBitrate(v === "auto" ? null : Number(v));
+        }}
+      >
+        <option value="auto">Default bitrate ({kbps(snapshot.default_bitrate)})</option>
+        {#each bitrateChoices as choice (choice)}
+          <option value={String(choice)}>{kbps(choice * 1000)}</option>
+        {/each}
       </select>
     </label>
     <button class="button quiet" onclick={() => (showAudio = true)}>Audio</button>
@@ -556,6 +587,7 @@
 
   footer {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 0.6rem;
     padding-top: 0.9rem;

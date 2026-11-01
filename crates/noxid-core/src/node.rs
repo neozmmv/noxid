@@ -22,7 +22,7 @@ use tracing::{info, warn};
 use crate::admin::{self, ADMIN_ALPN, AdminHandler};
 use crate::audio::{self, SystemAudio, Voice};
 use crate::gate::MemberGate;
-use crate::media::{self, Framerate, Mic, Quality, Screen};
+use crate::media::{self, Framerate, Mic, Outgoing, Quality, Screen};
 use crate::room::{self, Code, Member, Room};
 
 /// How long a node waits for a relay at startup before carrying on. Until it
@@ -102,6 +102,12 @@ pub struct Snapshot {
     pub max_quality: Quality,
     /// Pictures per second a share sends.
     pub framerate: Framerate,
+    /// The top rung's bitrate in bits per second, if one was chosen; `None`
+    /// means `default_bitrate`.
+    pub bitrate: Option<u64>,
+    /// What the top rung is sent at by default, for the chosen resolution and
+    /// framerate.
+    pub default_bitrate: u64,
     /// People waiting at the door. Only ever non-empty on the coordinator.
     pub knocks: Vec<KnockView>,
     /// Chosen devices, `None` meaning the system default.
@@ -213,8 +219,8 @@ pub(crate) struct Inner {
     name: Mutex<String>,
     pub room: Mutex<Room>,
     local: Mutex<Local>,
-    max_quality: Mutex<Quality>,
-    framerate: Mutex<Framerate>,
+    /// What a share sends: resolution, framerate, bitrate.
+    send: Mutex<Outgoing>,
     pub knocks: Mutex<HashMap<String, PendingKnock>>,
     /// Filled in by the mesh, read when building snapshots.
     pub peers: Mutex<HashMap<EndpointId, PeerView>>,
@@ -282,8 +288,7 @@ impl Node {
                 mic_test: false,
                 mic_before_deafen: None,
             }),
-            max_quality: Mutex::new(Quality::High),
-            framerate: Mutex::new(Framerate::default()),
+            send: Mutex::new(Outgoing::default()),
             knocks: Mutex::new(HashMap::new()),
             peers: Mutex::new(HashMap::new()),
             levels: Mutex::new(HashMap::new()),
@@ -590,16 +595,29 @@ impl Node {
     }
 
     /// Caps what this node publishes. Restarts a share in progress, since the
-    /// ladder is fixed when a share starts.
+    /// ladder is fixed when a share starts. The bitrate goes back to the new
+    /// resolution's default: a number picked for 1080p makes no sense at 360p.
     pub fn set_max_quality(&self, max: Quality) -> Result<()> {
-        *self.inner.max_quality.lock().unwrap() = max;
+        {
+            let mut send = self.inner.send.lock().unwrap();
+            send.max = max;
+            send.bitrate = None;
+        }
         self.inner.restart_share()
     }
 
     /// Sets how many pictures a second a share sends. Restarts a share in
     /// progress, like [`set_max_quality`](Self::set_max_quality).
     pub fn set_framerate(&self, rate: Framerate) -> Result<()> {
-        *self.inner.framerate.lock().unwrap() = rate;
+        self.inner.send.lock().unwrap().rate = rate;
+        self.inner.restart_share()
+    }
+
+    /// Sets the top rung's bitrate in bits per second, clamped to
+    /// `MIN_BITRATE..=MAX_BITRATE`, or back to the default with `None`.
+    pub fn set_bitrate(&self, bitrate: Option<u64>) -> Result<()> {
+        let bitrate = bitrate.map(|b| b.clamp(media::MIN_BITRATE, media::MAX_BITRATE));
+        self.inner.send.lock().unwrap().bitrate = bitrate;
         self.inner.restart_share()
     }
 
@@ -782,13 +800,12 @@ impl Inner {
         }
     }
 
-    /// Applies the current cap and framerate to a share in progress.
+    /// Applies the current send settings to a share in progress.
     fn restart_share(&self) -> Result<()> {
         let local = self.local.lock().unwrap();
         if let (Some(broadcast), Some(screen)) = (&local.screen_broadcast, &local.screen) {
-            let max = *self.max_quality.lock().unwrap();
-            let rate = *self.framerate.lock().unwrap();
-            media::share_screen(broadcast, screen, max, rate)?;
+            let send = *self.send.lock().unwrap();
+            media::share_screen(broadcast, screen, send)?;
         }
         drop(local);
         self.bump();
@@ -809,9 +826,8 @@ impl Inner {
             .live
             .publish(path)
             .map_err(|e| anyhow::anyhow!("{e:#}"))?;
-        let max = *self.max_quality.lock().unwrap();
-        let rate = *self.framerate.lock().unwrap();
-        media::share_screen(&broadcast, &screen, max, rate)?;
+        let send = *self.send.lock().unwrap();
+        media::share_screen(&broadcast, &screen, send)?;
         self.apply_screen_audio(&broadcast, local.screen_audio);
         local.screen_broadcast = Some(broadcast);
         Ok(())
@@ -868,6 +884,7 @@ impl Inner {
         let peers = self.peers.lock().unwrap();
         let modes = self.quality_modes.lock().unwrap();
         let prefs = self.audio_prefs.lock().unwrap();
+        let send = *self.send.lock().unwrap();
 
         let room_view = room.is_active().then(|| {
             let is_coordinator = room.is_coordinator(&own);
@@ -921,8 +938,10 @@ impl Inner {
             mic_on: local.mic_on,
             deafened: self.deafened.load(std::sync::atomic::Ordering::Relaxed),
             sharing: local.screen.is_some(),
-            max_quality: *self.max_quality.lock().unwrap(),
-            framerate: *self.framerate.lock().unwrap(),
+            max_quality: send.max,
+            framerate: send.rate,
+            bitrate: send.bitrate,
+            default_bitrate: send.default_bitrate(send.max),
             knocks,
             mic_device: local.mic_device.clone(),
             output_device: local.output_device.clone(),

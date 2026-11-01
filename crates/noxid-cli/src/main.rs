@@ -60,6 +60,7 @@ commands:
   unshare                   stop sharing
   max <low|mid|high>        cap what you share
   fps <24|30|60>            how many pictures a second you share
+  bitrate <kbps|auto>       the top quality's bitrate (auto: its default)
   quality <who> <auto|low|mid|high>   how to receive someone's share
   devices                   list microphones and outputs
   input <id|default>        pick the microphone
@@ -217,6 +218,10 @@ async fn run_command(node: &Node, line: &str) -> Result<()> {
         "unshare" => node.share_screen(None)?,
         "max" => node.set_max_quality(rest.parse()?)?,
         "fps" => node.set_framerate(rest.parse()?)?,
+        "bitrate" => node.set_bitrate(match rest {
+            "auto" | "" => None,
+            kbps => Some(kbps.parse::<u64>()? * 1000),
+        })?,
         "quality" => {
             let (who, mode) = rest
                 .rsplit_once(' ')

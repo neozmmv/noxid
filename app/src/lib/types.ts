@@ -54,6 +54,10 @@ export interface Snapshot {
   max_quality: Quality;
   /** Pictures per second a share sends: 24, 30 or 60. */
   framerate: number;
+  /** Top rung bitrate in bit/s if one was chosen, else `null`. */
+  bitrate: number | null;
+  /** What the top rung is sent at by default, in bit/s. */
+  default_bitrate: number;
   knocks: KnockView[];
   /** Chosen devices; null is the system default. */
   mic_device: string | null;
