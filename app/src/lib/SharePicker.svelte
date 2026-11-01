@@ -1,17 +1,34 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api } from "./api";
-  import type { DisplayInfo } from "./types";
+  import type { DisplayInfo, Quality, Snapshot } from "./types";
 
   // Choosing what to share: a whole screen, or one window, each shown as a
-  // still of what it looks like right now.
+  // still of what it looks like right now. The bitrate is chosen here too,
+  // since this is where a share is set up (and changed).
   interface Props {
+    snapshot: Snapshot;
     targets: DisplayInfo[];
     onpick: (id: string) => void;
     onclose: () => void;
   }
 
-  let { targets, onpick, onclose }: Props = $props();
+  let { snapshot, targets, onpick, onclose }: Props = $props();
+
+  // Bitrates on offer for the top quality, in kbit/s, around its default.
+  // A choice made earlier stays listed even if it is not one of these.
+  const BITRATES: Record<Quality, number[]> = {
+    low: [300, 400, 800, 1000, 1500],
+    mid: [1500, 2000, 3000, 4000, 6000],
+    high: [3000, 4000, 6000, 8000, 10000, 12000],
+  };
+  const bitrateChoices = $derived.by(() => {
+    const list = [...BITRATES[snapshot.max_quality]];
+    const chosen = snapshot.bitrate === null ? null : snapshot.bitrate / 1000;
+    if (chosen !== null && !list.includes(chosen)) list.push(chosen);
+    return list.sort((a, b) => a - b);
+  });
+  const kbps = (bits: number) => `${Math.round(bits / 1000).toLocaleString("en-US")} kbps`;
 
   const screens = $derived(targets.filter((t) => t.kind === "display"));
   const windows = $derived(targets.filter((t) => t.kind === "window"));
@@ -107,6 +124,22 @@
   </div>
 
   <div class="actions">
+    <label class="bitrate">
+      <span>Bitrate</span>
+      <select
+        class="field compact"
+        value={snapshot.bitrate === null ? "auto" : String(snapshot.bitrate / 1000)}
+        onchange={(e) => {
+          const v = e.currentTarget.value;
+          api.setBitrate(v === "auto" ? null : Number(v));
+        }}
+      >
+        <option value="auto">Default ({kbps(snapshot.default_bitrate)})</option>
+        {#each bitrateChoices as choice (choice)}
+          <option value={String(choice)}>{kbps(choice * 1000)}</option>
+        {/each}
+      </select>
+    </label>
     <button class="button quiet" onclick={onclose}>Cancel</button>
   </div>
 </div>
@@ -225,6 +258,22 @@
 
   .actions {
     display: flex;
-    justify-content: flex-end;
+    align-items: center;
+    gap: 0.6rem;
+  }
+
+  .bitrate {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-right: auto;
+    color: var(--mist);
+  }
+
+  .compact {
+    width: auto;
+    padding: 0.5rem 2.4rem 0.5rem 0.9rem;
+    border-radius: 999px;
+    background-color: var(--ink);
   }
 </style>
