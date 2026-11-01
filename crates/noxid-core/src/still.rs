@@ -126,7 +126,7 @@ fn shrink(source: HDC, rect: RECT, width: u32) -> Result<(Size, Vec<u8>)> {
     // `small` drops, after this copy.
     let bgra = unsafe { std::slice::from_raw_parts(bits as *const u8, len) };
     let mut rgba = Vec::with_capacity(len);
-    for px in bgra.chunks_exact(4) {
+    for px in bgra.as_chunks::<4>().0 {
         rgba.extend_from_slice(&[px[2], px[1], px[0], 255]);
     }
     Ok((Size::new(tw as u32, th as u32), rgba))
