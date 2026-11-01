@@ -45,6 +45,8 @@ pub const MAX_SCREEN_VOLUME: f32 = 1.0;
 #[serde(tag = "mode", content = "quality", rename_all = "lowercase")]
 pub enum QualityMode {
     /// Follow the link: iroh-live's adaptation switches as conditions change.
+    /// The default until the frontend picks: the app holds the share on stage
+    /// at the top rung instead.
     #[default]
     Auto,
     /// Hold one rendition whatever the link does.

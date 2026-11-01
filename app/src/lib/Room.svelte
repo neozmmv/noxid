@@ -27,15 +27,25 @@
   // Every other share, as a thumbnail beside the stage.
   const others = $derived(sharers.filter((m) => m.id !== focused?.id));
 
-  // Receiver-side quality: the share on stage follows the link (adaptive,
-  // up to the top rung), the others are pinned to the smallest rung since they
-  // are not on screen. A per-share choice on the stage overrides this.
+  // Receiver-side quality: the share on stage is held at the best rung the
+  // sharer sends, the others at the smallest since they are only thumbnails.
+  // "Automatic" (following the link) is a choice rather than the default: its
+  // bandwidth estimate rarely reads high enough over home internet to step up
+  // to the top rung, so it left people watching 720p or 360p on links that
+  // carried 1080p fine. A per-share choice on the stage overrides this.
   let overrides = $state<Record<string, QualityMode>>({});
+
+  function wantedMode(m: MemberView): QualityMode {
+    return (
+      overrides[m.id] ??
+      (focused?.id === m.id ? { mode: "pinned", quality: "high" } : { mode: "pinned", quality: "low" })
+    );
+  }
+
   $effect(() => {
     for (const m of members) {
       if (m.is_self || !m.has_video) continue;
-      const wanted: QualityMode =
-        overrides[m.id] ?? (focused?.id === m.id ? { mode: "auto" } : { mode: "pinned", quality: "low" });
+      const wanted = wantedMode(m);
       if (!sameMode(m.quality, wanted)) {
         api.setPeerQuality(m.id, wanted);
       }
@@ -48,8 +58,8 @@
   }
 
   function qualityChoice(m: MemberView): "auto" | Quality {
-    const q = overrides[m.id];
-    return !q || q.mode === "auto" ? "auto" : q.quality;
+    const q = wantedMode(m);
+    return q.mode === "auto" ? "auto" : q.quality;
   }
 
   function chooseQuality(id: string, value: string) {

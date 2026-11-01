@@ -47,6 +47,22 @@ const VOICE_HEADROOM: f32 = 1.0 / crate::MAX_VOLUME;
 /// level meter to keep working so the speaking indicator still shows.
 const MUTED_GAIN: f32 = 1e-4;
 
+/// How "Automatic" picks a rendition: iroh-live's defaults with an easier
+/// step up.
+///
+/// By default the sender's bandwidth estimate must reach 1.5x the next rung's
+/// bitrate before the ladder climbs to it. That headroom is tuned for openh264,
+/// which spends about 40% of its target; Media Foundation runs constant bitrate
+/// and spends all of it, and with 5 Mbit/s at 1080p the 7.5 Mbit/s bar was
+/// almost never met, so viewers sat on 720p or 360p. 1.1x still leaves a margin
+/// for the estimate's own over-reading.
+fn adaptation() -> iroh_live::media::adaptive::AdaptiveConfig {
+    iroh_live::media::adaptive::AdaptiveConfig {
+        delivery_upgrade_headroom: 1.1,
+        ..Default::default()
+    }
+}
+
 /// How often a broadcast the peer has not published yet is asked for again.
 const RESUBSCRIBE: Duration = Duration::from_secs(1);
 
@@ -403,7 +419,7 @@ async fn serve_screen(inner: &Inner, id: EndpointId, sub: &Subscription) {
                 .unwrap_or_default();
             if applied != Some(mode) {
                 match mode {
-                    QualityMode::Auto => track.enable_adaptation(sub.signals().clone()),
+                    QualityMode::Auto => track.enable_adaptation_with(sub.signals().clone(), adaptation()),
                     QualityMode::Pinned(wanted) => {
                         track.disable_adaptation();
                         let available: Vec<String> =
