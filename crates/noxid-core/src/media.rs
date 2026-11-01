@@ -95,6 +95,61 @@ impl std::str::FromStr for Quality {
     }
 }
 
+/// How many pictures a second a share sends: 24, 30 or 60.
+///
+/// Every rung of the ladder runs at it. 60 is for motion (games, video); 24
+/// saves bandwidth and CPU on a slide deck or a document.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "u32", into = "u32")]
+pub struct Framerate(u32);
+
+impl Framerate {
+    pub const ALL: [u32; 3] = [24, 30, 60];
+
+    pub fn fps(self) -> u32 {
+        self.0
+    }
+
+    /// The bitrate a rung needs at this rate, relative to 30 fps. Less than
+    /// linear: between two frames close in time there is less to encode.
+    fn bitrate_scale(self) -> f64 {
+        match self.0 {
+            24 => 0.85,
+            60 => 1.5,
+            _ => 1.0,
+        }
+    }
+}
+
+impl Default for Framerate {
+    fn default() -> Self {
+        Self(30)
+    }
+}
+
+impl TryFrom<u32> for Framerate {
+    type Error = anyhow::Error;
+
+    fn try_from(fps: u32) -> Result<Self> {
+        anyhow::ensure!(Self::ALL.contains(&fps), "{fps} fps is not offered; expected 24, 30 or 60");
+        Ok(Self(fps))
+    }
+}
+
+impl From<Framerate> for u32 {
+    fn from(rate: Framerate) -> u32 {
+        rate.0
+    }
+}
+
+impl std::str::FromStr for Framerate {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        s.trim_end_matches("fps").parse::<u32>()?.try_into()
+    }
+}
+
 /// Scales `source` to `height`, keeping its aspect ratio.
 ///
 /// Screens are not all 16:9, and the encoder stretches to whatever size it is
@@ -110,7 +165,7 @@ fn fit(source: Size, height: u32) -> Size {
 /// The renditions published for a `source`-sized share capped at `max`: every
 /// rung up to and including it. Rungs that collapse to the same size on a small
 /// source are dropped, keeping the smaller name.
-pub fn ladder(source: Size, max: Quality) -> Vec<VideoRendition> {
+pub fn ladder(source: Size, max: Quality, rate: Framerate) -> Vec<VideoRendition> {
     let mut seen = Vec::new();
     Quality::ALL
         .into_iter()
@@ -124,7 +179,7 @@ pub fn ladder(source: Size, max: Quality) -> Vec<VideoRendition> {
             Some(
                 VideoRendition::new(q.rendition())
                     .with_size(size)
-                    .with_bitrate(q.bitrate())
+                    .with_bitrate((q.bitrate() as f64 * rate.bitrate_scale()) as u64)
                     .with_keyframe_interval(KEYFRAME_INTERVAL),
             )
         })
@@ -232,6 +287,51 @@ pub async fn find_display(spec: Option<&str>) -> Result<Display> {
     })
 }
 
+/// The capture source for a display or window.
+fn capture_source(target: &Display) -> capture::Source {
+    match target.kind {
+        Kind::Display => capture::Source::Display(Some(target.id.clone())),
+        Kind::Window => capture::Source::Window(target.id.clone()),
+    }
+}
+
+/// How long a preview waits for its first picture. A window that is
+/// minimized or on another virtual desktop may never send one.
+const PREVIEW_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// A still of what sharing `id` (a display or window id) would show, scaled
+/// to at most `width` pixels wide, as its size and tightly packed RGBA.
+///
+/// Opens a capture just for the one picture and closes it again, so it costs
+/// nothing once the picker is gone.
+pub async fn preview(id: &str, width: u32) -> Result<(Size, Vec<u8>)> {
+    use iroh_live::media::video::{Output, convert, resize};
+
+    let target = find_display(Some(id)).await?;
+    let mut config = capture::Config::default();
+    config.source = capture_source(&target);
+    config.cursor = false;
+    let mut stream = capture::open(&config).await.map_err(|e| anyhow::anyhow!("{e:#}"))?;
+    let frame = tokio::time::timeout(PREVIEW_TIMEOUT, stream.read())
+        .await
+        .context("no picture arrived in time")?
+        .map_err(|e| anyhow::anyhow!("{e:#}"))?
+        .context("the capture ended before its first picture")?;
+    drop(stream);
+
+    let source = frame.size();
+    let height = (u64::from(source.height) * u64::from(width) / u64::from(source.width.max(1))) as u32;
+    let size = fit(source, height.max(2));
+    let mut scale = resize::Config::default();
+    scale.output = Output::Cpu;
+    let small = frame.resize(size, &scale).map_err(|e| anyhow::anyhow!("{e:#}"))?;
+    let rgba = small
+        .surface
+        .to_rgba(&convert::Config::default())
+        .map_err(|e| anyhow::anyhow!("{e:#}"))?;
+    Ok((rgba.size(), rgba.into_data()))
+}
+
 /// What a screen share shows.
 #[derive(Debug, Clone)]
 pub enum Screen {
@@ -250,18 +350,16 @@ impl Screen {
         }
     }
 
-    fn source(&self) -> VideoSource {
+    fn source(&self, rate: Framerate) -> VideoSource {
         match self {
             Screen::Display(display) => {
                 let mut config = capture::Config::default();
-                config.source = match display.kind {
-                    Kind::Display => capture::Source::Display(Some(display.id.clone())),
-                    Kind::Window => capture::Source::Window(display.id.clone()),
-                };
+                config.framerate = iroh_live::media::video::Rate::new(rate.fps(), 1).ok();
+                config.source = capture_source(display);
                 VideoSource::Capture(config)
             }
             #[cfg(feature = "test-source")]
-            Screen::Test => iroh_live::media::test_source::video(test_pattern(), 30),
+            Screen::Test => iroh_live::media::test_source::video(test_pattern(), rate.fps()),
         }
     }
 }
@@ -297,11 +395,12 @@ impl Mic {
     }
 }
 
-/// Starts sharing `screen`, capped at `max`, replacing any share in progress.
-pub fn share_screen(broadcast: &LocalBroadcast, screen: &Screen, max: Quality) -> Result<()> {
+/// Starts sharing `screen`, capped at `max` and sent at `rate`, replacing any
+/// share in progress.
+pub fn share_screen(broadcast: &LocalBroadcast, screen: &Screen, max: Quality, rate: Framerate) -> Result<()> {
     broadcast
         .video()
-        .set_renditions(screen.source(), ladder(screen.size(), max))
+        .set_renditions(screen.source(rate), ladder(screen.size(), max, rate))
         .map_err(|e| anyhow::anyhow!("{e:#}"))
 }
 
@@ -320,7 +419,7 @@ mod tests {
     use super::*;
 
     fn sizes(source: Size, max: Quality) -> Vec<(String, Size)> {
-        ladder(source, max)
+        ladder(source, max, Framerate::default())
             .into_iter()
             .map(|r| (r.name, r.size.unwrap()))
             .collect()
@@ -367,6 +466,22 @@ mod tests {
             assert_eq!(size.width % 2, 0);
             assert_eq!(size.height % 2, 0);
         }
+    }
+
+    #[test]
+    fn only_the_offered_framerates_parse() {
+        assert_eq!("60".parse::<Framerate>().unwrap().fps(), 60);
+        assert_eq!("24fps".parse::<Framerate>().unwrap().fps(), 24);
+        assert!("25".parse::<Framerate>().is_err());
+        assert!(serde_json::from_str::<Framerate>("120").is_err());
+        assert_eq!(serde_json::to_string(&Framerate::default()).unwrap(), "30");
+    }
+
+    #[test]
+    fn faster_shares_get_more_bits() {
+        let bitrate = |fps: u32| ladder(Size::new(1920, 1080), Quality::High, fps.try_into().unwrap())[2].bitrate;
+        assert!(bitrate(24) < bitrate(30));
+        assert!(bitrate(30) < bitrate(60));
     }
 
     #[test]

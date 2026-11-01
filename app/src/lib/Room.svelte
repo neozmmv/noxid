@@ -301,6 +301,18 @@
         <option value="low">Send up to 360p</option>
       </select>
     </label>
+    <label>
+      <span class="visually-hidden">Pictures per second you send</span>
+      <select
+        class="field compact"
+        value={snapshot.framerate}
+        onchange={(e) => api.setFramerate(Number(e.currentTarget.value))}
+      >
+        <option value={24}>24 fps</option>
+        <option value={30}>30 fps</option>
+        <option value={60}>60 fps</option>
+      </select>
+    </label>
     <button class="button quiet" onclick={() => (showAudio = true)}>Audio</button>
     <span class="spacer"></span>
     {#if confirmingLeave}

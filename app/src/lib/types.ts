@@ -52,6 +52,8 @@ export interface Snapshot {
   deafened: boolean;
   sharing: boolean;
   max_quality: Quality;
+  /** Pictures per second a share sends: 24, 30 or 60. */
+  framerate: number;
   knocks: KnockView[];
   /** Chosen devices; null is the system default. */
   mic_device: string | null;

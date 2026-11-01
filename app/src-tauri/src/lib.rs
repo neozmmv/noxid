@@ -241,6 +241,21 @@ async fn displays() -> CommandResult<Vec<DisplayInfo>> {
         .collect())
 }
 
+/// Width of the stills in the share picker.
+const PREVIEW_WIDTH: u32 = 320;
+
+/// A still of a display or window for the share picker: width and height
+/// (u32 LE each) followed by RGBA pixels, as raw bytes rather than JSON.
+#[tauri::command]
+async fn share_preview(id: String) -> CommandResult<tauri::ipc::Response> {
+    let (size, rgba) = media::preview(&id, PREVIEW_WIDTH).await.map_err(err)?;
+    let mut bytes = Vec::with_capacity(8 + rgba.len());
+    bytes.extend_from_slice(&size.width.to_le_bytes());
+    bytes.extend_from_slice(&size.height.to_le_bytes());
+    bytes.extend_from_slice(&rgba);
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
 /// Starts sharing the display or window with this id, or stops sharing with
 /// `None`.
 #[tauri::command]
@@ -251,6 +266,12 @@ async fn share_screen(state: tauri::State<'_, AppState>, display: Option<String>
         None => None,
     };
     node.share_screen(screen).map_err(err)
+}
+
+#[tauri::command]
+async fn set_framerate(state: tauri::State<'_, AppState>, fps: u32) -> CommandResult<()> {
+    let rate = media::Framerate::try_from(fps).map_err(err)?;
+    node(&state).await?.set_framerate(rate).map_err(err)
 }
 
 #[tauri::command]
@@ -367,6 +388,8 @@ pub fn run() {
             displays,
             share_screen,
             set_max_quality,
+            set_framerate,
+            share_preview,
             set_peer_quality,
             audio_devices,
             set_mic_device,
