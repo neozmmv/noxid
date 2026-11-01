@@ -199,9 +199,10 @@ fn sync_forwarders(
                 let slot = preview.clone().expect("collected above");
                 tokio::spawn(async move {
                     while let Some(frame) = slot.recv().await {
-                        // Our own screen is shown small; scaling it here keeps
-                        // a 1080p self view from costing as much as a remote one.
-                        forward(&tx, &id, &frame, Some(Quality::Low.height()));
+                        // Our own screen can fill the stage, so it is sent at
+                        // 720p: sharp enough to read, and half the bytes of a
+                        // 1080p capture on every frame.
+                        forward(&tx, &id, &frame, Some(Quality::Mid.height()));
                     }
                 })
             }

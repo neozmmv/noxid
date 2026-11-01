@@ -82,7 +82,9 @@
     <span class="title">{member.is_self ? "Your screen" : `${member.name}'s screen`}</span>
 
     {#if member.is_self}
-      <span class="meta">{sendingSound ? "With your PC's sound" : "Without sound"}</span>
+      <span class="meta">
+        {sendingSound ? "Sending your PC's sound. You hear it from your PC, not from here." : "Without sound"}
+      </span>
     {:else}
       <span class="meta">
         {#if member.width}{member.width}×{member.height}, {member.fps} fps{/if}

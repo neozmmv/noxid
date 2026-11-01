@@ -54,6 +54,7 @@
 
   {#if member.is_self}
     <hr />
+    <p class="note">Your PC's sound is not played back here, so it has no volume of its own.</p>
     <button class="item danger" onclick={() => (onstop(), onclose())}>Stop sharing</button>
   {:else}
     {#if member.has_screen_audio}
@@ -100,6 +101,13 @@
 </Menu>
 
 <style>
+  .note {
+    margin: 0;
+    padding: 0.35rem 0.5rem;
+    color: var(--mist);
+    font-size: var(--step--1);
+  }
+
   .quality {
     display: grid;
     gap: 0.4rem;
