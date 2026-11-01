@@ -33,10 +33,16 @@ n0-future = "0.3"
 bytes = "1"
 
 # WASAPI process loopback, for sharing the PC's sound without Noxid's own
-# output in it. Same release moq-video already compiles.
+# output in it, and GDI for border-free stills in the share picker. Same
+# release moq-video already compiles.
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
     "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_Storage_Xps",
+    "Win32_UI_HiDpi",
+    "Win32_UI_WindowsAndMessaging",
     "Win32_Media_Audio",
     "Win32_Media_Multimedia",
     "Win32_System_Com",

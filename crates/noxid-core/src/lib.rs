@@ -11,6 +11,8 @@ pub mod media;
 mod mesh;
 mod node;
 pub mod room;
+#[cfg(windows)]
+mod still;
 
 pub use node::{
     KnockView, MAX_SCREEN_VOLUME, MAX_VOLUME, MemberView, Node, NodeConfig, Notice, PeerAudio, PeerView, QualityMode,

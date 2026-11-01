@@ -26,9 +26,11 @@ pub use iroh_live::media::video::{Color, Frame, Size};
 ///
 /// A subscriber draws nothing until the next keyframe, so this bounds how long
 /// someone joining waits for the shared screen and how long a rendition switch
-/// takes to land. Shorter than the encoder default of two seconds because a
-/// call is joined and refocused far more often than a stream is.
-const KEYFRAME_INTERVAL: Duration = Duration::from_secs(1);
+/// takes to land. But the encoder runs at a constant bitrate, and a keyframe of
+/// a full screen costs many times a normal frame, so every keyframe leaves less
+/// for the frames around it. Two seconds (the encoder default) keeps text
+/// sharp at a wait nobody minds.
+const KEYFRAME_INTERVAL: Duration = Duration::from_secs(2);
 
 /// The size the generated test pattern is painted at.
 #[cfg(feature = "test-source")]
@@ -72,12 +74,17 @@ impl Quality {
         }
     }
 
-    /// Target bitrate in bits per second.
+    /// Target bitrate in bits per second, at 30 fps.
+    ///
+    /// Screens are mostly fine text, which H.264 smears quickly when starved;
+    /// these are about what streaming services use for 1080p and 720p desktop
+    /// content. In a full mesh the sender uploads one copy per viewer, so the
+    /// top rung at 60 fps to five people is about 40 Mbit/s up.
     pub fn bitrate(self) -> u64 {
         match self {
-            Quality::Low => 300_000,
-            Quality::Mid => 1_200_000,
-            Quality::High => 2_500_000,
+            Quality::Low => 600_000,
+            Quality::Mid => 2_500_000,
+            Quality::High => 5_000_000,
         }
     }
 }
@@ -297,19 +304,33 @@ fn capture_source(target: &Display) -> capture::Source {
 
 /// How long a preview waits for its first picture. A window that is
 /// minimized or on another virtual desktop may never send one.
+#[cfg(not(windows))]
 const PREVIEW_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// A still of what sharing `id` (a display or window id) would show, scaled
 /// to at most `width` pixels wide, as its size and tightly packed RGBA.
 ///
-/// Opens a capture just for the one picture and closes it again, so it costs
-/// nothing once the picker is gone.
+/// On Windows the still comes from GDI (see `still`), which unlike a capture
+/// session flashes no yellow border. Elsewhere it opens a capture just for
+/// the one picture and closes it again.
 pub async fn preview(id: &str, width: u32) -> Result<(Size, Vec<u8>)> {
+    let target = find_display(Some(id)).await?;
+    #[cfg(windows)]
+    {
+        tokio::task::spawn_blocking(move || crate::still::grab(&target, width)).await?
+    }
+    #[cfg(not(windows))]
+    {
+        capture_still(&target, width).await
+    }
+}
+
+#[cfg(not(windows))]
+async fn capture_still(target: &Display, width: u32) -> Result<(Size, Vec<u8>)> {
     use iroh_live::media::video::{Output, convert, resize};
 
-    let target = find_display(Some(id)).await?;
     let mut config = capture::Config::default();
-    config.source = capture_source(&target);
+    config.source = capture_source(target);
     config.cursor = false;
     let mut stream = capture::open(&config).await.map_err(|e| anyhow::anyhow!("{e:#}"))?;
     let frame = tokio::time::timeout(PREVIEW_TIMEOUT, stream.read())
