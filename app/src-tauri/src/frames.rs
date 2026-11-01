@@ -200,9 +200,10 @@ fn sync_forwarders(
                 tokio::spawn(async move {
                     while let Some(frame) = slot.recv().await {
                         // Our own screen can fill the stage, so it is sent at
-                        // 720p: sharp enough to read, and half the bytes of a
-                        // 1080p capture on every frame.
-                        forward(&tx, &id, &frame, Some(Quality::Mid.height()));
+                        // up to 1080p, the top rung anyone receives. A larger
+                        // capture (1440p, 4K) is scaled down here first: the
+                        // webview never needs more, and raw 4K is 12 MB a frame.
+                        forward(&tx, &id, &frame, Some(Quality::High.height()));
                     }
                 })
             }
