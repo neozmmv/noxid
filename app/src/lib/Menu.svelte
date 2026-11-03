@@ -62,9 +62,7 @@
     margin: 0;
     padding: 0.35rem 0.5rem 0.5rem;
     font-weight: 650;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
   }
 
   .menu :global(.who span) {

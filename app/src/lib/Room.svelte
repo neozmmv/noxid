@@ -461,9 +461,7 @@
   .thumb span {
     font-size: var(--step--1);
     color: var(--mist);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
   }
 
   header {

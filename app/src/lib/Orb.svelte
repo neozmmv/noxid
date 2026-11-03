@@ -200,12 +200,12 @@
     border-width: 2px;
   }
 
+  /* A long name wraps onto more lines rather than being cut short. */
   .name {
     font-weight: 600;
     max-width: 14ch;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    text-align: center;
+    overflow-wrap: anywhere;
   }
 
   .you {
