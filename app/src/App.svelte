@@ -5,6 +5,7 @@
   import type { Notice, Snapshot } from "./lib/types";
   import Lobby from "./lib/Lobby.svelte";
   import Room from "./lib/Room.svelte";
+  import Titlebar from "./lib/Titlebar.svelte";
 
   let snapshot = $state<Snapshot | null>(null);
   let notice = $state<string | null>(null);
@@ -44,6 +45,7 @@
   });
 </script>
 
+<Titlebar />
 <main>
   {#if startError}
     <section class="status">
@@ -67,8 +69,10 @@
 </main>
 
 <style>
+  /* Below the titlebar, which stays put while the page scrolls. */
   main {
-    height: 100%;
+    height: calc(100% - 34px);
+    overflow: auto;
   }
 
   .status {

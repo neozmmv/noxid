@@ -438,6 +438,11 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            // Without the system's titlebar the window is not given the app's
+            // icon on its own, and the taskbar shows none; set it outright.
+            if let (Some(window), Some(icon)) = (app.get_webview_window("main"), app.default_window_icon()) {
+                let _ = window.set_icon(icon.clone());
+            }
             let (node_tx, node_rx) = watch::channel(None);
             let frames = tauri::async_runtime::block_on(frames::start(node_rx.clone()))?;
             app.manage(AppState {
