@@ -20,6 +20,7 @@ use tokio::sync::{broadcast, oneshot, watch};
 use tracing::{info, warn};
 
 use crate::admin::{self, ADMIN_ALPN, AdminHandler};
+use crate::avatar::{self, AVATAR_ALPN, AvatarHandler, Avatars};
 use crate::files::{self, FILES_ALPN, FilesHandler, TransferView, Transfers};
 use crate::audio::{self, SystemAudio, Voice};
 use crate::gate::MemberGate;
@@ -97,6 +98,8 @@ impl PeerAudio {
 pub struct Snapshot {
     pub id: String,
     pub name: String,
+    /// Our profile picture's hash, to fetch with `avatar`.
+    pub avatar: Option<String>,
     pub room: Option<RoomView>,
     pub mic_on: bool,
     /// Hearing nobody (and, while it lasts, mic off).
@@ -145,6 +148,8 @@ pub struct RoomView {
 pub struct MemberView {
     pub id: String,
     pub name: String,
+    /// Their picture's hash, once we have a copy to show.
+    pub avatar: Option<String>,
     pub is_self: bool,
     pub is_coordinator: bool,
     #[serde(flatten)]
@@ -237,6 +242,10 @@ pub(crate) struct Inner {
     pub live: Live,
     pub mic: Mic,
     name: Mutex<String>,
+    /// Our profile picture's hash, if we have one.
+    avatar: Mutex<Option<String>>,
+    /// Copies of other members' pictures.
+    pub(crate) avatars: Mutex<Avatars>,
     pub room: Mutex<Room>,
     local: Mutex<Local>,
     /// What a share sends: resolution, framerate, bitrate.
@@ -298,6 +307,8 @@ impl Node {
             live: live.clone(),
             mic: config.mic,
             name: Mutex::new(room::display_name(&config.name, &id.to_string())),
+            avatar: Mutex::new(avatar::load_own()),
+            avatars: Mutex::new(Avatars::default()),
             room: Mutex::new(Room::default()),
             local: Mutex::new(Local {
                 voice: None,
@@ -343,6 +354,12 @@ impl Node {
                 FilesHandler {
                     inner: inner.clone(),
                 },
+            )
+            .accept(
+                AVATAR_ALPN,
+                AvatarHandler {
+                    inner: inner.clone(),
+                },
             );
         let gate = MemberGate {
             inner: inner.clone(),
@@ -355,6 +372,7 @@ impl Node {
 
         tokio::spawn(crate::mesh::run(inner.clone(), roster_rx));
         tokio::spawn(admin::roster_heartbeat(inner.clone()));
+        tokio::spawn(avatar::run(inner.clone()));
 
         match tokio::time::timeout(ONLINE_TIMEOUT, endpoint.online()).await {
             Ok(()) => info!("online"),
@@ -421,12 +439,48 @@ impl Node {
         }
     }
 
+    /// Sets our profile picture to `bytes` (an encoded image, see `avatar`),
+    /// or removes it with `None`. Like the name, a member's new picture
+    /// reaches others the next time it joins; the coordinator's at once.
+    pub fn set_avatar(&self, bytes: Option<&[u8]>) -> Result<()> {
+        let hash = match bytes {
+            Some(bytes) => Some(avatar::save_own(bytes)?),
+            None => {
+                avatar::clear_own()?;
+                None
+            }
+        };
+        *self.inner.avatar.lock().unwrap() = hash.clone();
+        let own_id = self.id().to_string();
+        let mut room = self.inner.room.lock().unwrap();
+        room.set_avatar(&own_id, hash.as_deref());
+        if room.is_coordinator(&own_id) {
+            drop(room);
+            self.inner.roster_changed(None);
+        } else {
+            drop(room);
+            self.inner.bump();
+        }
+        Ok(())
+    }
+
+    /// The picture with `hash`, ours or a member's, if we have it.
+    pub fn avatar(&self, hash: &str) -> Option<Vec<u8>> {
+        let own = self.inner.own_avatar();
+        let known = own.as_deref() == Some(hash) || self.inner.avatars.lock().unwrap().is_ready(hash);
+        known.then(|| avatar::read(own.as_deref(), hash)).flatten()
+    }
+
     /// Creates a room with this node as its coordinator, and joins its call.
     pub async fn create(&self, name: Option<String>) -> Result<()> {
         self.leave().await;
         let own_id = self.id().to_string();
         let own_name = self.inner.name();
-        self.inner.room.lock().unwrap().create(name, &own_id, &own_name);
+        {
+            let mut room = self.inner.room.lock().unwrap();
+            room.create(name, &own_id, &own_name);
+            room.set_avatar(&own_id, self.inner.own_avatar().as_deref());
+        }
         self.inner.start_local()?;
         self.inner.roster_changed(None);
         Ok(())
@@ -453,15 +507,20 @@ impl Node {
         }
         self.leave().await;
 
-        let admission = admin::join(&self.inner.endpoint, code, self.inner.name()).await?;
+        let own_avatar = self.inner.own_avatar();
+        let admission = admin::join(&self.inner.endpoint, code, self.inner.name(), own_avatar.clone()).await?;
         let own_id = self.id().to_string();
-        self.inner.room.lock().unwrap().set_joined(
-            &code.coordinator().to_string(),
-            &own_id,
-            &self.inner.name(),
-            admission.room_name,
-            admission.members,
-        );
+        {
+            let mut room = self.inner.room.lock().unwrap();
+            room.set_joined(
+                &code.coordinator().to_string(),
+                &own_id,
+                &self.inner.name(),
+                admission.room_name,
+                admission.members,
+            );
+            room.set_avatar(&own_id, own_avatar.as_deref());
+        }
         self.inner.start_local()?;
         self.inner.roster_changed(None);
         Ok(())
@@ -862,6 +921,14 @@ impl Inner {
         self.changed.send_modify(|n| *n = n.wrapping_add(1));
     }
 
+    pub fn subscribe_changes(&self) -> watch::Receiver<u64> {
+        self.changed.subscribe()
+    }
+
+    pub fn own_avatar(&self) -> Option<String> {
+        self.avatar.lock().unwrap().clone()
+    }
+
     pub fn notice(&self, notice: Notice) {
         let _ = self.notices.send(notice);
     }
@@ -1079,6 +1146,8 @@ impl Inner {
         let modes = self.quality_modes.lock().unwrap();
         let prefs = self.audio_prefs.lock().unwrap();
         let send = *self.send.lock().unwrap();
+        let own_avatar = self.own_avatar();
+        let avatars = self.avatars.lock().unwrap();
 
         let room_view = room.is_active().then(|| {
             let is_coordinator = room.is_coordinator(&own);
@@ -1089,7 +1158,7 @@ impl Inner {
                 members: room
                     .roster()
                     .into_iter()
-                    .map(|Member { id, name }| {
+                    .map(|Member { id, name, avatar }| {
                         let parsed: Option<EndpointId> = id.parse().ok();
                         let mut peer = parsed
                             .and_then(|p| peers.get(&p).cloned())
@@ -1100,7 +1169,12 @@ impl Inner {
                         let audio = parsed
                             .and_then(|p| prefs.get(&p).copied())
                             .unwrap_or_default();
+                        // Only a picture we can hand over: ours, or a copy.
+                        let avatar = avatar.filter(|a| {
+                            own_avatar.as_deref() == Some(a.as_str()) || avatars.is_ready(a)
+                        });
                         MemberView {
+                            avatar,
                             is_self: id == own,
                             is_coordinator: room.coordinator_id.as_deref() == Some(id.as_str()),
                             id,
@@ -1128,6 +1202,7 @@ impl Inner {
         Snapshot {
             id: own,
             name: self.name(),
+            avatar: own_avatar,
             room: room_view,
             mic_on: local.mic_on,
             deafened: self.deafened.load(std::sync::atomic::Ordering::Relaxed),

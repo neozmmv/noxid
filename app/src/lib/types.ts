@@ -11,6 +11,8 @@ export type AudioStream = "voice" | "screen";
 export interface MemberView {
   id: string;
   name: string;
+  /** Their picture's hash, once there is a copy to show. */
+  avatar: string | null;
   is_self: boolean;
   is_coordinator: boolean;
   connected: boolean;
@@ -48,6 +50,8 @@ export interface KnockView {
 export interface Snapshot {
   id: string;
   name: string;
+  /** Our profile picture's hash. */
+  avatar: string | null;
   room: RoomView | null;
   mic_on: boolean;
   /** Hearing nobody; the mic is off while it lasts. */

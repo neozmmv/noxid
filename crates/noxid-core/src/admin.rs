@@ -50,10 +50,20 @@ const JOIN_RETRY_DELAY: Duration = Duration::from_secs(2);
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum AdminRequest {
     /// Joiner to coordinator: redeem an invite token.
-    Join { token_hex: String, name: String },
+    Join {
+        token_hex: String,
+        name: String,
+        /// Their picture's hash; older versions send none.
+        #[serde(default)]
+        avatar: Option<String>,
+    },
     /// Joiner to coordinator: ask to be let in. The reply comes once the
     /// coordinator decides, or the knock times out.
-    Knock { name: String },
+    Knock {
+        name: String,
+        #[serde(default)]
+        avatar: Option<String>,
+    },
     /// Member to coordinator: take me off the roster.
     Leave,
     /// Coordinator to member: the roster changed, here it is.
@@ -137,8 +147,12 @@ impl ProtocolHandler for AdminHandler {
 impl AdminHandler {
     async fn dispatch(&self, request: AdminRequest, requester: &str) -> AdminResponse {
         match request {
-            AdminRequest::Join { token_hex, name } => self.join(&token_hex, &name, requester),
-            AdminRequest::Knock { name } => self.knock(name, requester).await,
+            AdminRequest::Join {
+                token_hex,
+                name,
+                avatar,
+            } => self.join(&token_hex, &name, avatar.as_deref(), requester),
+            AdminRequest::Knock { name, avatar } => self.knock(name, avatar, requester).await,
             AdminRequest::Leave => self.leave(requester),
             AdminRequest::Roster { room_name, members } => {
                 self.roster(room_name, members, requester)
@@ -161,17 +175,18 @@ impl AdminHandler {
         }
     }
 
-    fn join(&self, token_hex: &str, name: &str, requester: &str) -> AdminResponse {
+    fn join(&self, token_hex: &str, name: &str, avatar: Option<&str>, requester: &str) -> AdminResponse {
         let Ok(Ok(token)) = hex::decode(token_hex).map(<[u8; 16]>::try_from) else {
             return error("invalid token");
         };
-        let admitted = self.is_coordinator()
-            && self
-                .inner
-                .room
-                .lock()
-                .unwrap()
-                .redeem_invite(&token, requester, name, chrono::Utc::now());
+        let admitted = self.is_coordinator() && {
+            let mut room = self.inner.room.lock().unwrap();
+            let admitted = room.redeem_invite(&token, requester, name, chrono::Utc::now());
+            if admitted {
+                room.set_avatar(requester, avatar);
+            }
+            admitted
+        };
         if !admitted {
             // One answer for every way a code can fail.
             return AdminResponse::Denied {
@@ -183,7 +198,7 @@ impl AdminHandler {
         self.admitted()
     }
 
-    async fn knock(&self, name: String, requester: &str) -> AdminResponse {
+    async fn knock(&self, name: String, avatar: Option<String>, requester: &str) -> AdminResponse {
         if !self.is_coordinator() {
             return AdminResponse::Denied {
                 message: "this room is not open".to_string(),
@@ -193,7 +208,11 @@ impl AdminHandler {
         // Someone already on the roster (back after a restart) comes straight in.
         let already_in = self.inner.room.lock().unwrap().is_member(requester);
         if already_in {
-            self.inner.room.lock().unwrap().admit(requester, &name);
+            {
+                let mut room = self.inner.room.lock().unwrap();
+                room.admit(requester, &name);
+                room.set_avatar(requester, avatar.as_deref());
+            }
             self.inner.roster_changed(Some(requester));
             return self.admitted();
         }
@@ -224,7 +243,11 @@ impl AdminHandler {
                 message: "the host did not let you in".to_string(),
             };
         }
-        self.inner.room.lock().unwrap().admit(requester, &name);
+        {
+            let mut room = self.inner.room.lock().unwrap();
+            room.admit(requester, &name);
+            room.set_avatar(requester, avatar.as_deref());
+        }
         info!(%requester, %name, "let in");
         self.inner.roster_changed(Some(requester));
         self.admitted()
@@ -258,6 +281,8 @@ impl AdminHandler {
             let mut room = self.inner.room.lock().unwrap();
             let before = room.roster();
             room.set_roster(&own_id, &name, room_name, members);
+            // Ours stays ours, whatever the push says about it.
+            room.set_avatar(&own_id, self.inner.own_avatar().as_deref());
             room.roster() != before
         };
         // The heartbeat re-sends an unchanged roster every few seconds; only an
@@ -328,7 +353,12 @@ pub(crate) struct Admission {
 }
 
 /// Joins with an invite, or knocks and waits for the coordinator's answer.
-pub(crate) async fn join(endpoint: &Endpoint, code: Code, name: String) -> Result<Admission> {
+pub(crate) async fn join(
+    endpoint: &Endpoint,
+    code: Code,
+    name: String,
+    avatar: Option<String>,
+) -> Result<Admission> {
     let response = match code {
         Code::Knock { coordinator } => {
             // A little longer than the coordinator waits, so its "nobody
@@ -336,7 +366,7 @@ pub(crate) async fn join(endpoint: &Endpoint, code: Code, name: String) -> Resul
             call(
                 endpoint,
                 coordinator,
-                AdminRequest::Knock { name },
+                AdminRequest::Knock { name, avatar },
                 KNOCK_TIMEOUT + Duration::from_secs(10),
             )
             .await
@@ -352,6 +382,7 @@ pub(crate) async fn join(endpoint: &Endpoint, code: Code, name: String) -> Resul
                 let request = AdminRequest::Join {
                     token_hex: hex::encode(token),
                     name: name.clone(),
+                    avatar: avatar.clone(),
                 };
                 match call(endpoint, coordinator, request, CALL_TIMEOUT).await {
                     Ok(r) => {

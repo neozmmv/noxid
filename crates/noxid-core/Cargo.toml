@@ -31,6 +31,8 @@ moq-net = "0.3"
 sonora = "0.2"
 n0-future = "0.3"
 bytes = "1"
+# Profile pictures are named by their hash; iroh already links this release.
+blake3 = "1.8"
 
 # WASAPI process loopback, for sharing the PC's sound without Noxid's own
 # output in it, GDI for border-free stills in the share picker, and

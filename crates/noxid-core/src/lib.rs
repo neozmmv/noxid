@@ -3,6 +3,7 @@
 //! relay can reuse it.
 
 mod admin;
+mod avatar;
 pub mod audio;
 #[cfg(windows)]
 mod dshow;

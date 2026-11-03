@@ -40,6 +40,9 @@ export const api = {
   /** Opens the folder a received file was saved in. */
   showTransfer: (id: number) => invoke<void>("show_transfer", { id }),
   openRelease: (tag: string) => invoke<void>("open_release", { tag }),
+  setAvatar: (image: Uint8Array) => invoke<void>("set_avatar", image),
+  clearAvatar: () => invoke<void>("clear_avatar"),
+  avatar: (hash: string) => invoke<ArrayBuffer>("avatar", { hash }),
   /** A still from a camera, in the layout sharePreview uses. */
   cameraPreview: (id: string) => invoke<ArrayBuffer>("camera_preview", { id }),
   /** Turns the camera with this id on, or the camera off with null. */

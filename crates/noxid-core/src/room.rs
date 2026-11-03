@@ -50,6 +50,10 @@ pub struct Member {
     /// anything: identity is the endpoint id.
     #[serde(default)]
     pub name: String,
+    /// The hash of their profile picture, which they serve themselves (see
+    /// `avatar`). Left out by versions without pictures, so it defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar: Option<String>,
 }
 
 impl Member {
@@ -57,6 +61,7 @@ impl Member {
         Self {
             id: id.into(),
             name: name.into(),
+            avatar: None,
         }
     }
 }
@@ -266,6 +271,14 @@ impl Room {
         }
     }
 
+    /// Sets a listed member's picture. Anything but a well-formed hash counts
+    /// as no picture, so a bad roster entry can never name a path or a URL.
+    pub fn set_avatar(&mut self, id: &str, avatar: Option<&str>) {
+        if let Some(member) = self.members.iter_mut().find(|m| m.id == id) {
+            member.avatar = avatar.filter(|a| crate::avatar::is_hash(a)).map(str::to_string);
+        }
+    }
+
     /// Records the room we were admitted to, with the roster the coordinator
     /// handed back. Without that roster a joiner would only trust the
     /// coordinator, and members would reject each other.
@@ -296,7 +309,11 @@ impl Room {
         for member in roster {
             if !self.is_member(&member.id) {
                 let name = display_name(&member.name, &member.id);
-                self.members.push(Member::new(member.id, name));
+                let avatar = member.avatar.filter(|a| crate::avatar::is_hash(a));
+                self.members.push(Member {
+                    avatar,
+                    ..Member::new(member.id, name)
+                });
             }
         }
         // We and the coordinator stay in our own roster whatever arrives, so a
@@ -534,6 +551,23 @@ mod tests {
         assert!(room.is_member(&id(1)) && room.is_member(&id(2)));
         assert_eq!(room.name.as_deref(), Some("standup"));
         assert!(!room.is_coordinator(&id(2)));
+    }
+
+    #[test]
+    fn a_roster_push_keeps_pictures_but_only_well_formed_ones() {
+        let mut room = Room::default();
+        room.set_joined(&id(1), &id(2), "me", None, vec![]);
+        let good = crate::avatar::hash(b"picture");
+        let with = |n: u8, avatar: &str| Member {
+            avatar: Some(avatar.to_string()),
+            ..Member::new(id(n), "x")
+        };
+
+        room.set_roster(&id(2), "me", None, vec![with(3, &good), with(4, "../../key")]);
+
+        let avatar_of = |n: u8| room.roster().into_iter().find(|m| m.id == id(n)).unwrap().avatar;
+        assert_eq!(avatar_of(3), Some(good));
+        assert_eq!(avatar_of(4), None, "a path is never taken for a hash");
     }
 
     #[test]

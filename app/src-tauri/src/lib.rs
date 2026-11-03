@@ -114,6 +114,31 @@ async fn set_name(state: tauri::State<'_, AppState>, name: String) -> CommandRes
     Ok(())
 }
 
+/// Sets our profile picture: the request body is the encoded image itself,
+/// sent raw rather than as a JSON array of numbers.
+#[tauri::command]
+async fn set_avatar(state: tauri::State<'_, AppState>, request: tauri::ipc::Request<'_>) -> CommandResult<()> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("expected the picture's bytes".to_string());
+    };
+    node(&state).await?.set_avatar(Some(bytes)).map_err(err)
+}
+
+#[tauri::command]
+async fn clear_avatar(state: tauri::State<'_, AppState>) -> CommandResult<()> {
+    node(&state).await?.set_avatar(None).map_err(err)
+}
+
+/// A profile picture by its hash, as raw bytes.
+#[tauri::command]
+async fn avatar(state: tauri::State<'_, AppState>, hash: String) -> CommandResult<tauri::ipc::Response> {
+    let bytes = node(&state)
+        .await?
+        .avatar(&hash)
+        .ok_or_else(|| "no such picture".to_string())?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
 #[derive(Serialize)]
 struct AudioDevices {
     inputs: Vec<AudioDevice>,
@@ -522,6 +547,9 @@ pub fn run() {
             dismiss_transfer,
             show_transfer,
             open_release,
+            set_avatar,
+            clear_avatar,
+            avatar,
             share_camera,
             set_max_quality,
             set_framerate,

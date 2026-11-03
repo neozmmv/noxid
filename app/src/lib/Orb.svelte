@@ -1,5 +1,6 @@
 <script lang="ts">
   import MicOff from "@lucide/svelte/icons/mic-off";
+  import { avatarUrl } from "./avatars.svelte";
   import { REMOTE_THRESHOLD, fromDb, prefs, voice } from "./levels.svelte";
   import type { MemberView } from "./types";
 
@@ -43,6 +44,8 @@
   );
 
   // Muted at the source (they turned their mic off) versus muted by us.
+  const picture = $derived(avatarUrl(member.avatar));
+
   const micOff = $derived(member.is_self ? !micOn : member.connected && !member.has_audio);
   const mutedByMe = $derived(!member.is_self && member.voice_muted);
   const connecting = $derived(!member.is_self && !member.connected);
@@ -105,7 +108,11 @@
   aria-label={`${member.name}${member.is_self ? " (you)" : ""}${status ? `, ${status}` : ""}${speaking ? ", speaking" : ""}`}
 >
   <span class="face">
-    {initials}
+    {#if picture}
+      <img class="picture" src={picture} alt="" draggable="false" />
+    {:else}
+      {initials}
+    {/if}
     {#if micOff || mutedByMe}
       <span class="badge" class:mine={mutedByMe && !micOff} aria-hidden="true">
         <MicOff size={small ? 11 : 14} strokeWidth={2.5} />
@@ -194,6 +201,22 @@
 
   .connecting .face {
     opacity: 0.45;
+  }
+
+  /* Inside the face, so the speaking ring and its gap still go around it. */
+  .picture {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    object-fit: cover;
+    pointer-events: none;
+  }
+
+  /* Hovering darkens a picture the way it lightens a plain face. */
+  button.orb:hover .picture {
+    filter: brightness(0.85);
   }
 
   .badge {

@@ -1,7 +1,10 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import { api } from "./api";
+  import UserRoundPen from "@lucide/svelte/icons/user-round-pen";
   import AudioSettings from "./AudioSettings.svelte";
+  import ProfilePicture from "./ProfilePicture.svelte";
+  import { tooltip } from "./tooltip";
   import type { Snapshot } from "./types";
 
   let { snapshot }: { snapshot: Snapshot } = $props();
@@ -11,6 +14,7 @@
   let roomName = $state("");
   let code = $state("");
   let showAudio = $state(false);
+  let showPicture = $state(false);
   let busy = $state<"start" | "join" | null>(null);
   let error = $state<string | null>(null);
 
@@ -63,7 +67,17 @@
       <span>Your name</span>
       <input class="field" bind:value={name} onblur={saveName} placeholder="How others see you" maxlength="32" />
     </label>
-    <button class="button quiet" onclick={() => (showAudio = true)}>Audio settings</button>
+    <div class="settings">
+      <button class="button quiet" onclick={() => (showAudio = true)}>Audio settings</button>
+      <button
+        class="button quiet picture"
+        aria-label="Profile picture"
+        use:tooltip={"Profile picture"}
+        onclick={() => (showPicture = true)}
+      >
+        <UserRoundPen size={18} aria-hidden="true" />
+      </button>
+    </div>
   </div>
 
   <div class="ways">
@@ -93,6 +107,10 @@
     <p class="error" role="alert">{error}</p>
   {/if}
 </div>
+
+{#if showPicture}
+  <ProfilePicture {snapshot} onclose={() => (showPicture = false)} />
+{/if}
 
 {#if showAudio}
   <AudioSettings {snapshot} onclose={() => (showAudio = false)} />
@@ -139,8 +157,13 @@
     align-items: end;
   }
 
-  .you .button {
-    justify-self: start;
+  .settings {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .picture {
+    padding: 0.6rem;
   }
 
   .name {
