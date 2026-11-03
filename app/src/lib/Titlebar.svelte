@@ -1,5 +1,9 @@
 <script lang="ts">
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import CircleArrowUp from "@lucide/svelte/icons/circle-arrow-up";
+  import { api } from "./api";
+  import { tooltip } from "./tooltip";
+  import { newerRelease } from "./update";
   import Copy from "@lucide/svelte/icons/copy";
   import Minus from "@lucide/svelte/icons/minus";
   import Square from "@lucide/svelte/icons/square";
@@ -11,12 +15,22 @@
   // double-click on it maximizes, as a native bar would.
   const win = getCurrentWindow();
   let maximized = $state(false);
+  // A newer release's tag, once one is found.
+  let update = $state<string | null>(null);
+  // Checked at start and then now and again, for a window left open for days.
+  const RECHECK = 6 * 60 * 60 * 1000;
 
   onMount(() => {
     const sync = () => win.isMaximized().then((m) => (maximized = m));
     sync();
     const unlisten = win.onResized(sync);
-    return () => void unlisten.then((f) => f());
+    const check = () => newerRelease().then((tag) => (update = tag));
+    check();
+    const timer = setInterval(check, RECHECK);
+    return () => {
+      clearInterval(timer);
+      void unlisten.then((f) => f());
+    };
   });
 </script>
 
@@ -27,6 +41,16 @@
   </span>
 
   <div class="controls">
+    {#if update}
+      <button
+        class="update"
+        use:tooltip={`Noxid ${update} is out`}
+        onclick={() => update && api.openRelease(update)}
+      >
+        <CircleArrowUp size={14} aria-hidden="true" />
+        Update
+      </button>
+    {/if}
     <button aria-label="Minimize" onclick={() => win.minimize()}>
       <Minus size={16} strokeWidth={1.5} aria-hidden="true" />
     </button>
@@ -93,6 +117,27 @@
 
   .controls .close:hover {
     background: var(--signal);
+    color: var(--ink);
+  }
+
+  /* Lit like the ring in the corner: the one thing up here asking for you. */
+  .controls .update {
+    display: flex;
+    gap: 0.35rem;
+    align-self: center;
+    width: auto;
+    height: 24px;
+    margin-right: 0.4rem;
+    padding: 0 0.65rem;
+    border-radius: 7px;
+    background: rgb(246 185 74 / 0.12);
+    color: var(--lamp);
+    font-size: var(--step--1);
+    font-weight: 600;
+  }
+
+  .controls .update:hover {
+    background: var(--lamp);
     color: var(--ink);
   }
 

@@ -39,6 +39,7 @@ export const api = {
   dismissTransfer: (id: number) => invoke<void>("dismiss_transfer", { id }),
   /** Opens the folder a received file was saved in. */
   showTransfer: (id: number) => invoke<void>("show_transfer", { id }),
+  openRelease: (tag: string) => invoke<void>("open_release", { tag }),
   /** A still from a camera, in the layout sharePreview uses. */
   cameraPreview: (id: string) => invoke<ArrayBuffer>("camera_preview", { id }),
   /** Turns the camera with this id on, or the camera off with null. */

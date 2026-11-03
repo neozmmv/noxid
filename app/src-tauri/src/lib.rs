@@ -344,6 +344,24 @@ async fn show_transfer(state: tauri::State<'_, AppState>, id: u64) -> CommandRes
     tauri_plugin_opener::reveal_item_in_dir(path).map_err(err)
 }
 
+/// Where releases are published; the update button links into it.
+const REPO: &str = "https://github.com/neozmmv/noxid";
+
+/// Opens the release page for `tag` (`vMAJOR.MINOR.PATCH`) in the browser.
+/// Only a release tag is accepted, so the page cannot open anything else.
+#[tauri::command]
+fn open_release(tag: String) -> CommandResult<()> {
+    let parts: Vec<&str> = tag.strip_prefix('v').unwrap_or("").split('.').collect();
+    let valid = parts.len() == 3
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
+    if !valid {
+        return Err(format!("not a release tag: {tag:?}"));
+    }
+    tauri_plugin_opener::open_url(format!("{REPO}/releases/tag/{tag}"), None::<&str>).map_err(err)
+}
+
 /// The cameras this machine has.
 #[tauri::command]
 async fn cameras() -> Vec<media::CameraInfo> {
@@ -503,6 +521,7 @@ pub fn run() {
             cancel_transfer,
             dismiss_transfer,
             show_transfer,
+            open_release,
             share_camera,
             set_max_quality,
             set_framerate,
