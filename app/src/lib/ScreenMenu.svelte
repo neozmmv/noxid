@@ -54,7 +54,7 @@
 
   {#if member.is_self}
     <hr />
-    <p class="note">Your PC's sound is not played back here, so it has no volume of its own.</p>
+    <p class="note">The sound you share is not played back here, so it has no volume of its own.</p>
     <button class="item danger" onclick={() => (onstop(), onclose())}>Stop sharing</button>
   {:else}
     {#if member.has_screen_audio}

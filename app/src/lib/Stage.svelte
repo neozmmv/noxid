@@ -43,7 +43,12 @@
 
   function keydown(event: KeyboardEvent) {
     if (event.key === "Escape" && fullscreen) setFullscreen(false);
-    if (event.key === "f" && !(event.target instanceof HTMLInputElement)) setFullscreen(!fullscreen);
+    const typing =
+      event.target instanceof HTMLInputElement ||
+      event.target instanceof HTMLSelectElement ||
+      event.target instanceof HTMLTextAreaElement;
+    const modified = event.ctrlKey || event.metaKey || event.altKey;
+    if (event.key === "f" && !typing && !modified) setFullscreen(!fullscreen);
   }
 
   // Leaving fullscreen when the share goes away (or the stage unmounts), so
@@ -202,7 +207,7 @@
   }
 
   .icon:hover {
-    background: #3a416f;
+    background: var(--dusk-hover);
   }
 
   .icon[aria-pressed="true"] {

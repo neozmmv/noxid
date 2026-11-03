@@ -3,6 +3,7 @@
   --ink: #1b1f3b;
   --dusk: #262b4f;
   --dusk-raised: #30365f;
+  --dusk-hover: #3a416f;
   --moon: #f3f1fa;
   --mist: #b9bcd6;
   --lamp: #f6b94a;
@@ -116,7 +117,7 @@ select.field option {
 }
 
 .button:hover:not(:disabled) {
-  background: #3a416f;
+  background: var(--dusk-hover);
 }
 
 .button:disabled {

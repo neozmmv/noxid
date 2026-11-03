@@ -187,7 +187,7 @@
       </div>
       <div>
         <h2>Invite</h2>
-        <p>Comes straight in, once, within 30 minutes.</p>
+        <p>Lets one person straight in. Works once, within 30 minutes.</p>
         {#if invite}
           <div class="code">
             <code>{invite}</code>
@@ -311,7 +311,7 @@
       {snapshot.sharing ? "Stop sharing" : "Share screen"}
     </button>
     {#if snapshot.sharing}
-      <button class="button quiet" onclick={pickShare}>Change window</button>
+      <button class="button quiet" onclick={pickShare}>Share something else</button>
     {/if}
     <label>
       <span class="visually-hidden">Highest quality you send</span>
@@ -585,7 +585,7 @@
   }
 
   .mic:hover {
-    background: #3a416f;
+    background: var(--dusk-hover);
   }
 
   .mic.off {

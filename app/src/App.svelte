@@ -21,9 +21,12 @@
     }
   }
 
+  let noticeTimer: ReturnType<typeof setTimeout> | undefined;
+
   function showNotice(n: Notice) {
     notice = describe(n);
-    setTimeout(() => (notice = null), 6000);
+    clearTimeout(noticeTimer);
+    noticeTimer = setTimeout(() => (notice = null), 6000);
   }
 
   onMount(() => {
