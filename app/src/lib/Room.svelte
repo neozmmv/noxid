@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api } from "./api";
+  import { tooltip } from "./tooltip";
   import { setDeafened, setMic } from "./controls";
   import type { CameraInfo, DisplayInfo, MemberView, Quality, QualityMode, Snapshot } from "./types";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
@@ -365,7 +366,7 @@
       class:off={!snapshot.mic_on}
       aria-pressed={!snapshot.mic_on}
       aria-label={snapshot.mic_on ? "Turn mic off" : "Turn mic on"}
-      title={snapshot.mic_on ? "Turn mic off" : "Turn mic on"}
+      use:tooltip={snapshot.mic_on ? "Turn mic off" : "Turn mic on"}
       onclick={() => setMic(!snapshot.mic_on, snapshot.deafened)}
     >
       {#if snapshot.mic_on}
@@ -379,7 +380,7 @@
       class:off={snapshot.deafened}
       aria-pressed={snapshot.deafened}
       aria-label={snapshot.deafened ? "Undeafen" : "Deafen (hear nobody)"}
-      title={snapshot.deafened ? "Undeafen" : "Deafen (hear nobody)"}
+      use:tooltip={snapshot.deafened ? "Undeafen" : "Deafen (hear nobody)"}
       onclick={() => setDeafened(!snapshot.deafened)}
     >
       {#if snapshot.deafened}
@@ -394,7 +395,7 @@
       aria-pressed={snapshot.camera_on}
       aria-haspopup={snapshot.camera_on ? undefined : "dialog"}
       aria-label={snapshot.camera_on ? "Turn camera off" : "Turn camera on"}
-      title={snapshot.camera_on ? "Turn camera off" : "Turn camera on"}
+      use:tooltip={snapshot.camera_on ? "Turn camera off" : "Turn camera on"}
       onclick={toggleCamera}
     >
       {#if snapshot.camera_on}

@@ -4,6 +4,7 @@
   import Volume2 from "@lucide/svelte/icons/volume-2";
   import VolumeX from "@lucide/svelte/icons/volume-x";
   import { api } from "./api";
+  import { tooltip } from "./tooltip";
   import FloatingCamera from "./FloatingCamera.svelte";
   import { setFullscreen as goFullscreen, view } from "./fullscreen.svelte";
   import ScreenView from "./ScreenView.svelte";
@@ -132,6 +133,7 @@
           class="icon"
           aria-pressed={member.screen_muted}
           aria-label={member.screen_muted ? "Unmute the screen's sound" : "Mute the screen's sound"}
+          use:tooltip={member.screen_muted ? "Unmute sound" : "Mute sound"}
           onclick={() => setSound(member.screen_volume, !member.screen_muted)}
           ondblclick={(e) => e.stopPropagation()}
         >
@@ -172,7 +174,7 @@
     <button
       class="icon"
       aria-label={fullscreen ? "Exit fullscreen" : "Fullscreen"}
-      title={fullscreen ? "Exit fullscreen (Esc)" : "Fullscreen (F)"}
+      use:tooltip={fullscreen ? { label: "Exit fullscreen", key: "Esc" } : { label: "Fullscreen", key: "F" }}
       onclick={() => setFullscreen(!fullscreen)}
       ondblclick={(e) => e.stopPropagation()}
     >

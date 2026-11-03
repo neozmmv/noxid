@@ -4,6 +4,7 @@
   import Upload from "@lucide/svelte/icons/upload";
   import X from "@lucide/svelte/icons/x";
   import { api } from "./api";
+  import { tooltip } from "./tooltip";
   import type { TransferView } from "./types";
 
   // File transfers, in and out, as banners like the one for someone asking
@@ -128,7 +129,7 @@
         <button
           class="dismiss"
           aria-label={`Dismiss ${t.file_name}`}
-          title="Dismiss"
+          use:tooltip={"Dismiss"}
           onclick={() => api.dismissTransfer(t.id).catch(fail)}
         >
           <X size={18} aria-hidden="true" />
