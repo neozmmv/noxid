@@ -131,17 +131,25 @@
     max-width: 34ch;
   }
 
+  /* On the same two columns as the forms below, so the button's left edge
+     sits on the divider between them. */
   .you {
-    display: flex;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
     align-items: end;
-    gap: 0.8rem;
+  }
+
+  .you .button {
+    justify-self: start;
   }
 
   .name {
     display: grid;
     gap: 0.4rem;
     width: 100%;
-    max-width: 320px;
+    /* The gap before the divider's column, outside the field's own 320px. */
+    max-width: calc(320px + 2rem);
+    padding-right: 2rem;
   }
 
   .name span {
@@ -195,6 +203,10 @@
   }
 
   @media (max-width: 680px) {
+    .you {
+      display: flex;
+      gap: 0.8rem;
+    }
     .ways {
       grid-template-columns: 1fr;
       grid-template-rows: none;
