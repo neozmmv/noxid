@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api } from "./api";
+  import { setMic } from "./controls";
   import Menu from "./Menu.svelte";
   import type { AudioStream, MemberView } from "./types";
 
@@ -11,11 +12,12 @@
     y: number;
     isHost: boolean;
     micOn: boolean;
+    deafened: boolean;
     onclose: () => void;
     onaudiosettings: () => void;
   }
 
-  let { member, x, y, isHost, micOn, onclose, onaudiosettings }: Props = $props();
+  let { member, x, y, isHost, micOn, deafened, onclose, onaudiosettings }: Props = $props();
 
   function setAudio(stream: AudioStream, volume: number, muted: boolean) {
     api.setPeerAudio(member.id, stream, volume, muted);
@@ -39,7 +41,7 @@
   <p class="who">{member.name}{#if member.is_self}<span> (you)</span>{/if}</p>
 
   {#if member.is_self}
-    <button class="item" onclick={() => (api.setMic(!micOn), onclose())}>
+    <button class="item" onclick={() => (setMic(!micOn, deafened), onclose())}>
       {micOn ? "Turn mic off" : "Turn mic on"}
     </button>
     <button class="item" onclick={() => (onaudiosettings(), onclose())}>Audio settings</button>

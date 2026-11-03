@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api } from "./api";
   import type { DisplayInfo, MemberView, Quality, QualityMode, Snapshot } from "./types";
+  import { setDeafened, setMic } from "./controls";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import Headphones from "@lucide/svelte/icons/headphones";
   import HeadphoneOff from "@lucide/svelte/icons/headphone-off";
@@ -275,7 +276,7 @@
       aria-pressed={!snapshot.mic_on}
       aria-label={snapshot.mic_on ? "Turn mic off" : "Turn mic on"}
       title={snapshot.mic_on ? "Turn mic off" : "Turn mic on"}
-      onclick={() => api.setMic(!snapshot.mic_on)}
+      onclick={() => setMic(!snapshot.mic_on, snapshot.deafened)}
     >
       {#if snapshot.mic_on}
         <Mic size={22} aria-hidden="true" />
@@ -289,7 +290,7 @@
       aria-pressed={snapshot.deafened}
       aria-label={snapshot.deafened ? "Undeafen" : "Deafen (hear nobody)"}
       title={snapshot.deafened ? "Undeafen" : "Deafen (hear nobody)"}
-      onclick={() => api.setDeafened(!snapshot.deafened)}
+      onclick={() => setDeafened(!snapshot.deafened)}
     >
       {#if snapshot.deafened}
         <HeadphoneOff size={22} aria-hidden="true" />
@@ -343,6 +344,7 @@
       y={menu.y}
       isHost={room.is_coordinator}
       micOn={snapshot.mic_on}
+      deafened={snapshot.deafened}
       onclose={() => (menu = null)}
       onaudiosettings={() => (showAudio = true)}
     />
