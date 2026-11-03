@@ -12,10 +12,22 @@
     focused?: boolean;
     onselect?: (() => void) | null;
     onmenu?: ((event: MouseEvent) => void) | null;
+    /** Whether files can be dropped on them to send. */
+    dropTarget?: boolean;
+    /** Whether files are being dragged over them right now. */
+    dropping?: boolean;
   }
 
-  let { member, micOn = true, small = false, focused = false, onselect = null, onmenu = null }: Props =
-    $props();
+  let {
+    member,
+    micOn = true,
+    small = false,
+    focused = false,
+    onselect = null,
+    onmenu = null,
+    dropTarget = false,
+    dropping = false,
+  }: Props = $props();
 
   /** How long the ring stays lit after the level drops, so it does not
    *  flicker between syllables. */
@@ -86,6 +98,8 @@
   class:focused
   class:connecting
   class:speaking
+  class:dropping
+  data-drop-peer={dropTarget ? member.id : undefined}
   onclick={onselect}
   oncontextmenu={contextmenu}
   aria-label={`${member.name}${member.is_self ? " (you)" : ""}${status ? `, ${status}` : ""}${speaking ? ", speaking" : ""}`}
@@ -169,6 +183,13 @@
   .focused .face {
     outline: 2px solid var(--moon);
     outline-offset: 9px;
+  }
+
+  /* Files held over them: the face shows it will take them. */
+  .dropping .face {
+    background: var(--dusk-raised);
+    outline: 2px dashed var(--lamp);
+    outline-offset: 6px;
   }
 
   .connecting .face {

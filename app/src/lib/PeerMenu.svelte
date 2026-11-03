@@ -15,9 +15,11 @@
     deafened: boolean;
     onclose: () => void;
     onaudiosettings: () => void;
+    /** Opens the file picker to send them a file. */
+    onsendfile: () => void;
   }
 
-  let { member, x, y, isHost, micOn, deafened, onclose, onaudiosettings }: Props = $props();
+  let { member, x, y, isHost, micOn, deafened, onclose, onaudiosettings, onsendfile }: Props = $props();
 
   function setAudio(stream: AudioStream, volume: number, muted: boolean) {
     api.setPeerAudio(member.id, stream, volume, muted);
@@ -66,6 +68,11 @@
         oninput={(e) => setAudio("voice", Number(e.currentTarget.value) / 100, member.voice_muted)}
       />
     </label>
+
+    <hr />
+    <button class="item" disabled={!member.connected} onclick={() => (onsendfile(), onclose())}>
+      Send a file…
+    </button>
 
     {#if member.has_screen_audio}
       <hr />

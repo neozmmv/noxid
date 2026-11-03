@@ -11,6 +11,9 @@
   import VideoOff from "@lucide/svelte/icons/video-off";
   import AudioSettings from "./AudioSettings.svelte";
   import Confirm from "./Confirm.svelte";
+  import Transfers from "./Transfers.svelte";
+  import { getCurrentWebview } from "@tauri-apps/api/webview";
+  import { onMount } from "svelte";
   import CameraPicker from "./CameraPicker.svelte";
   import Orb from "./Orb.svelte";
   import PeerMenu from "./PeerMenu.svelte";
@@ -107,6 +110,43 @@
 
   const shareLabel = (m: MemberView) =>
     `${m.is_self ? "Your" : `${m.name}'s`} ${hasScreen(m) ? "screen" : "camera"}`;
+
+  // Files dropped from the system onto someone's picture are offered to
+  // them. The webview reports drops by position, so the picture under the
+  // pointer is found from the point; it lights up while files hover over it.
+  let dropPeer = $state<string | null>(null);
+
+  function peerAt(position: { x: number; y: number }): string | null {
+    const scale = window.devicePixelRatio || 1;
+    const element = document.elementFromPoint(position.x / scale, position.y / scale);
+    return element?.closest<HTMLElement>("[data-drop-peer]")?.dataset.dropPeer ?? null;
+  }
+
+  onMount(() => {
+    const unlisten = getCurrentWebview().onDragDropEvent(({ payload }) => {
+      if (payload.type === "enter" || payload.type === "over") {
+        dropPeer = peerAt(payload.position);
+      } else if (payload.type === "drop") {
+        const peer = peerAt(payload.position);
+        dropPeer = null;
+        if (peer && payload.paths.length) sendFiles(peer, payload.paths);
+      } else {
+        dropPeer = null;
+      }
+    });
+    return () => {
+      unlisten.then((stop) => stop());
+    };
+  });
+
+  async function sendFiles(peer: string, paths: string[] = []) {
+    error = null;
+    try {
+      await api.sendFiles(peer, paths);
+    } catch (e) {
+      error = String(e);
+    }
+  }
 
   // The camera: off with one click; on by choosing it in a picker that shows
   // a picture from each camera, even when there is only one, so you see what
@@ -258,6 +298,8 @@
     </section>
   {/each}
 
+  <Transfers transfers={snapshot.transfers} />
+
   <div class="main">
     {#if focused}
       <div class="screens" class:with-others={others.length > 0}>
@@ -302,6 +344,8 @@
           small={!!focused}
           focused={focused?.id === member.id}
           onselect={sharers.some((s) => s.id === member.id) ? () => (chosen = member.id) : null}
+          dropTarget={!member.is_self && member.connected}
+          dropping={dropPeer === member.id}
           onmenu={(e) => {
             screenMenu = null;
             menu = { id: member.id, x: e.clientX, y: e.clientY };
@@ -408,6 +452,7 @@
       deafened={snapshot.deafened}
       onclose={() => (menu = null)}
       onaudiosettings={() => (showAudio = true)}
+      onsendfile={() => sendFiles(menuMember.id)}
     />
   {/key}
 {/if}

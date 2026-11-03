@@ -6,6 +6,7 @@ mod admin;
 pub mod audio;
 #[cfg(windows)]
 mod dshow;
+pub mod files;
 mod gate;
 pub mod identity;
 pub mod log;

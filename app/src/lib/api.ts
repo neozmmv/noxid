@@ -31,6 +31,14 @@ export const api = {
   displays: () => invoke<DisplayInfo[]>("displays"),
   shareScreen: (display: string | null) => invoke<void>("share_screen", { display }),
   cameras: () => invoke<CameraInfo[]>("cameras"),
+  /** Offers files to a member: these paths, or with none, a file picker.
+   *  Resolves to how many were offered. */
+  sendFiles: (peer: string, paths: string[] = []) => invoke<number>("send_files", { peer, paths }),
+  answerTransfer: (id: number, accept: boolean) => invoke<void>("answer_transfer", { id, accept }),
+  cancelTransfer: (id: number) => invoke<void>("cancel_transfer", { id }),
+  dismissTransfer: (id: number) => invoke<void>("dismiss_transfer", { id }),
+  /** Opens the folder a received file was saved in. */
+  showTransfer: (id: number) => invoke<void>("show_transfer", { id }),
   /** A still from a camera, in the layout sharePreview uses. */
   cameraPreview: (id: string) => invoke<ArrayBuffer>("camera_preview", { id }),
   /** Turns the camera with this id on, or the camera off with null. */

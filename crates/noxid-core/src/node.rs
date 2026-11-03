@@ -20,6 +20,7 @@ use tokio::sync::{broadcast, oneshot, watch};
 use tracing::{info, warn};
 
 use crate::admin::{self, ADMIN_ALPN, AdminHandler};
+use crate::files::{self, FILES_ALPN, FilesHandler, TransferView, Transfers};
 use crate::audio::{self, SystemAudio, Voice};
 use crate::gate::MemberGate;
 use crate::media::{self, CameraSource, Framerate, Mic, Outgoing, Quality, Screen};
@@ -126,6 +127,8 @@ pub struct Snapshot {
     /// Whether our camera is on, and which one, by its id from the camera list.
     pub camera_on: bool,
     pub camera_device: Option<String>,
+    /// Files being offered, sent or received, and recently finished ones.
+    pub transfers: Vec<TransferView>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -255,6 +258,8 @@ pub(crate) struct Inner {
     pub audio_prefs: Mutex<HashMap<EndpointId, PeerAudio>>,
     /// Hear nobody, whatever their own volume says.
     pub deafened: std::sync::atomic::AtomicBool,
+    /// File transfers, in and out.
+    pub(crate) transfers: Transfers,
     /// The current roster's ids, which the mesh follows.
     pub roster_tx: watch::Sender<Vec<EndpointId>>,
     /// Bumped on every change, so a frontend knows to read a new snapshot.
@@ -318,6 +323,7 @@ impl Node {
             quality_modes: Mutex::new(HashMap::new()),
             audio_prefs: Mutex::new(HashMap::new()),
             deafened: std::sync::atomic::AtomicBool::new(false),
+            transfers: Transfers::default(),
             roster_tx,
             changed: watch::channel(0).0,
             notices: broadcast::channel(16).0,
@@ -325,12 +331,19 @@ impl Node {
 
         // Media is only ever served to members: every MoQ ALPN goes through the
         // gate, never straight to iroh-live's handler, which accepts anyone.
-        let mut router = Router::builder(endpoint.clone()).accept(
-            ADMIN_ALPN,
-            AdminHandler {
-                inner: inner.clone(),
-            },
-        );
+        let mut router = Router::builder(endpoint.clone())
+            .accept(
+                ADMIN_ALPN,
+                AdminHandler {
+                    inner: inner.clone(),
+                },
+            )
+            .accept(
+                FILES_ALPN,
+                FilesHandler {
+                    inner: inner.clone(),
+                },
+            );
         let gate = MemberGate {
             inner: inner.clone(),
             moq: live.protocol_handler(),
@@ -715,6 +728,37 @@ impl Node {
         self.inner.tiles.lock().unwrap().get(id).cloned()
     }
 
+    /// Offers the file at `path` to member `peer`, and sends it once they
+    /// accept. Returns the transfer's id; its progress is in the snapshot.
+    pub async fn send_file(&self, peer: &str, path: std::path::PathBuf) -> Result<u64> {
+        let peer: EndpointId = peer.parse().context("not a member id")?;
+        files::send(self.inner.clone(), peer, path).await
+    }
+
+    /// Accepts or declines a file someone offered us.
+    pub fn answer_transfer(&self, id: u64, accept: bool) -> Result<()> {
+        let result = self.inner.transfers.answer(id, accept);
+        self.inner.bump();
+        result
+    }
+
+    /// Stops a transfer, sending or receiving, at any stage.
+    pub fn cancel_transfer(&self, id: u64) {
+        self.inner.transfers.cancel(id);
+        self.inner.bump();
+    }
+
+    /// Forgets a finished transfer.
+    pub fn dismiss_transfer(&self, id: u64) {
+        self.inner.transfers.dismiss(id);
+        self.inner.bump();
+    }
+
+    /// Where a received file was saved.
+    pub fn transfer_path(&self, id: u64) -> Option<std::path::PathBuf> {
+        self.inner.transfers.saved_to(id)
+    }
+
     /// Decoded camera frames for one participant, while their camera is on.
     pub fn camera_frames(&self, id: &EndpointId) -> Option<Arc<FrameReceiver<Frame>>> {
         self.inner.camera_tiles.lock().unwrap().get(id).cloned()
@@ -957,6 +1001,8 @@ impl Inner {
     /// Drops out of the room locally: stops publishing, forgets the roster,
     /// and lets the mesh close every link. Telling others is the caller's job.
     pub async fn leave_local(&self) {
+        // Transfers are between members; leaving ends them.
+        files::stop_all(self);
         let (voice, screen, camera) = {
             let mut local = self.local.lock().unwrap();
             local.screen = None;
@@ -1060,6 +1106,7 @@ impl Inner {
             sharing_window: local.screen.as_ref().and_then(Screen::window).is_some(),
             camera_on: local.camera.is_some(),
             camera_device: local.camera.as_ref().map(|c| c.id.clone()),
+            transfers: self.transfers.views(),
         }
     }
 

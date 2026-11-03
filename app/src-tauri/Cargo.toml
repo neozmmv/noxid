@@ -25,6 +25,11 @@ tokio-tungstenite = "0.30"
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 getrandom = "0.4"
 hex = "0.4"
+# The native file picker for "Send a file", and "Show in folder" for a
+# received one. Both are used from Rust only, so the webview gets no new
+# permissions.
+tauri-plugin-dialog = "2.8"
+tauri-plugin-opener = "2.7"
 
 # Wayland only allows screen capture through xdg-desktop-portal and PipeWire.
 [target.'cfg(target_os = "linux")'.dependencies]

@@ -73,7 +73,36 @@ export interface Snapshot {
   camera_on: boolean;
   /** The camera in use; null is the default one. */
   camera_device: string | null;
+  /** Files being offered, sent or received, and recently finished ones. */
+  transfers: TransferView[];
 }
+
+export type TransferState =
+  /** Sending: waiting for them to accept. */
+  | { state: "waiting" }
+  /** Receiving: waiting for us to accept. */
+  | { state: "offered" }
+  | { state: "active" }
+  | { state: "done" }
+  | { state: "declined" }
+  /** We stopped it. */
+  | { state: "canceled" }
+  /** They stopped it. */
+  | { state: "canceled_by_peer" }
+  | { state: "failed"; message: string };
+
+export type TransferView = {
+  id: number;
+  peer: string;
+  peer_name: string;
+  direction: "send" | "receive";
+  file_name: string;
+  /** Total size and how much has moved, in bytes. */
+  size: number;
+  done: number;
+  /** Receiving, once done: where the file was saved. */
+  saved_to: string | null;
+} & TransferState;
 
 export interface CameraInfo {
   id: string;

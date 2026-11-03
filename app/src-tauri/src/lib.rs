@@ -280,6 +280,70 @@ async fn share_screen(state: tauri::State<'_, AppState>, display: Option<String>
     node.share_screen(screen).map_err(err)
 }
 
+/// Offers a file to a member: the given paths (dropped on their picture), or
+/// with none, one picked in the system's file picker. Returns how many were
+/// offered; picking nothing offers nothing.
+#[tauri::command]
+async fn send_files(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    peer: String,
+    paths: Vec<String>,
+) -> CommandResult<usize> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let node = node(&state).await?;
+    let paths: Vec<std::path::PathBuf> = if paths.is_empty() {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        app.dialog()
+            .file()
+            .set_title("Send a file")
+            .pick_files(move |picked| {
+                let _ = tx.send(picked);
+            });
+        rx.await
+            .map_err(err)?
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|p| p.into_path().ok())
+            .collect()
+    } else {
+        paths.into_iter().map(Into::into).collect()
+    };
+    let count = paths.len();
+    for path in paths {
+        node.send_file(&peer, path).await.map_err(err)?;
+    }
+    Ok(count)
+}
+
+#[tauri::command]
+async fn answer_transfer(state: tauri::State<'_, AppState>, id: u64, accept: bool) -> CommandResult<()> {
+    node(&state).await?.answer_transfer(id, accept).map_err(err)
+}
+
+#[tauri::command]
+async fn cancel_transfer(state: tauri::State<'_, AppState>, id: u64) -> CommandResult<()> {
+    node(&state).await?.cancel_transfer(id);
+    Ok(())
+}
+
+#[tauri::command]
+async fn dismiss_transfer(state: tauri::State<'_, AppState>, id: u64) -> CommandResult<()> {
+    node(&state).await?.dismiss_transfer(id);
+    Ok(())
+}
+
+/// Opens the folder a received file was saved in, with the file selected.
+#[tauri::command]
+async fn show_transfer(state: tauri::State<'_, AppState>, id: u64) -> CommandResult<()> {
+    let path = node(&state)
+        .await?
+        .transfer_path(id)
+        .ok_or_else(|| "that file was not saved".to_string())?;
+    tauri_plugin_opener::reveal_item_in_dir(path).map_err(err)
+}
+
 /// The cameras this machine has.
 #[tauri::command]
 async fn cameras() -> Vec<media::CameraInfo> {
@@ -372,6 +436,7 @@ pub fn run() {
     }));
 
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let (node_tx, node_rx) = watch::channel(None);
             let frames = tauri::async_runtime::block_on(frames::start(node_rx.clone()))?;
@@ -428,6 +493,11 @@ pub fn run() {
             share_screen,
             cameras,
             camera_preview,
+            send_files,
+            answer_transfer,
+            cancel_transfer,
+            dismiss_transfer,
+            show_transfer,
             share_camera,
             set_max_quality,
             set_framerate,

@@ -83,9 +83,14 @@
     text-align: left;
   }
 
-  .menu :global(.item:hover),
+  .menu :global(.item:hover:not(:disabled)),
   .menu :global(.row:hover) {
     background: var(--dusk-raised);
+  }
+
+  .menu :global(.item:disabled) {
+    opacity: 0.5;
+    cursor: default;
   }
 
   .menu :global(.danger) {
