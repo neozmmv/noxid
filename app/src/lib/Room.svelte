@@ -8,6 +8,9 @@
   import HeadphoneOff from "@lucide/svelte/icons/headphone-off";
   import Mic from "@lucide/svelte/icons/mic";
   import MicOff from "@lucide/svelte/icons/mic-off";
+  import Monitor from "@lucide/svelte/icons/monitor";
+  import MonitorOff from "@lucide/svelte/icons/monitor-off";
+  import PictureInPicture2 from "@lucide/svelte/icons/picture-in-picture-2";
   import Video from "@lucide/svelte/icons/video";
   import VideoOff from "@lucide/svelte/icons/video-off";
   import AudioSettings from "./AudioSettings.svelte";
@@ -404,11 +407,29 @@
         <VideoOff size={22} aria-hidden="true" />
       {/if}
     </button>
-    <button class="button" aria-pressed={snapshot.sharing} onclick={toggleShare}>
-      {snapshot.sharing ? "Stop sharing" : "Share screen"}
+    <button
+      class="mic"
+      class:off={snapshot.sharing}
+      aria-pressed={snapshot.sharing}
+      aria-label={snapshot.sharing ? "Stop sharing" : "Share screen"}
+      use:tooltip={snapshot.sharing ? "Stop sharing" : "Share screen"}
+      onclick={toggleShare}
+    >
+      {#if snapshot.sharing}
+        <MonitorOff size={22} aria-hidden="true" />
+      {:else}
+        <Monitor size={22} aria-hidden="true" />
+      {/if}
     </button>
     {#if snapshot.sharing}
-      <button class="button quiet" onclick={pickShare}>Share something else</button>
+      <button
+        class="mic"
+        aria-label="Share something else"
+        use:tooltip={"Share something else"}
+        onclick={pickShare}
+      >
+        <PictureInPicture2 size={22} aria-hidden="true" />
+      </button>
     {/if}
     <label>
       <span class="visually-hidden">Highest quality you send</span>
