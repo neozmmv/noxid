@@ -4,6 +4,8 @@
   import { setDeafened, setMic } from "./controls";
   import type { CameraInfo, DisplayInfo, MemberView, Quality, QualityMode, Snapshot } from "./types";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
+  import Eye from "@lucide/svelte/icons/eye";
+  import EyeOff from "@lucide/svelte/icons/eye-off";
   import Headphones from "@lucide/svelte/icons/headphones";
   import HeadphoneOff from "@lucide/svelte/icons/headphone-off";
   import Mic from "@lucide/svelte/icons/mic";
@@ -190,6 +192,8 @@
   let showInvite = $state(false);
   let invite = $state<string | null>(null);
   let copied = $state<"room" | "invite" | null>(null);
+  // Hidden until asked for, so it does not end up on a shared screen.
+  let codeShown = $state(false);
 
   async function newInvite() {
     invite = await api.invite();
@@ -272,7 +276,26 @@
         <h2>Room code</h2>
         <p>Anyone with it can ask to join; you let them in.</p>
         <div class="code">
-          <code>{room.room_code}</code>
+          <!-- Both are always laid out, one over the other, so the box keeps
+               its size whichever is showing. -->
+          <code class="room-code" class:shown={codeShown}>
+            <span class="plain" aria-hidden={!codeShown}>{room.room_code}</span>
+            <span class="mask" aria-hidden="true">{"•".repeat(room.room_code?.length ?? 12)}</span>
+            {#if !codeShown}<span class="visually-hidden">Hidden</span>{/if}
+          </code>
+          <button
+            class="button quiet reveal"
+            aria-pressed={codeShown}
+            aria-label={codeShown ? "Hide the room code" : "Show the room code"}
+            use:tooltip={codeShown ? "Hide code" : "Show code"}
+            onclick={() => (codeShown = !codeShown)}
+          >
+            {#if codeShown}
+              <EyeOff size={18} aria-hidden="true" />
+            {:else}
+              <Eye size={18} aria-hidden="true" />
+            {/if}
+          </button>
           <button class="button quiet" onclick={() => room.room_code && copy(room.room_code, "room")}>
             {copied === "room" ? "Copied" : "Copy"}
           </button>
@@ -666,6 +689,33 @@
     font-family: inherit;
     font-size: var(--step--1);
     overflow-wrap: anywhere;
+  }
+
+  .room-code {
+    display: grid;
+  }
+
+  .room-code > span:not(.visually-hidden) {
+    grid-area: 1 / 1;
+  }
+
+  /* Dots set a little apart, so they read as a mask. */
+  .room-code .mask {
+    color: var(--mist);
+    letter-spacing: 0.12em;
+  }
+
+  .room-code .plain,
+  .room-code.shown .mask {
+    visibility: hidden;
+  }
+
+  .room-code.shown .plain {
+    visibility: visible;
+  }
+
+  .reveal {
+    padding: 0.6rem;
   }
 
   .knock {
