@@ -38,8 +38,16 @@ use tracing::{debug, info, warn};
 type Frame = noxid_core::media::Frame;
 
 /// Bytes before the planes: endpoint id (32), width and height (u32 LE each),
-/// colour space (1), padding (3).
+/// colour space (1), feed (1, see [`Feed`]), padding (2).
 const HEADER_LEN: usize = 44;
+
+/// Which of a participant's pictures a frame belongs to. Each has its own
+/// view in the webview, told apart by this byte in the header.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Feed {
+    Screen = 0,
+    Camera = 1,
+}
 
 /// Frames waiting to be written across all tiles. Small on purpose: a frame
 /// that has to wait is already stale.
@@ -118,6 +126,12 @@ enum Source {
     Preview(usize),
 }
 
+/// One picture a forwarder runs for: whose, and which.
+type Tile = (EndpointId, Feed);
+
+type RemoteSlot = Arc<noxid_core::media::FrameReceiver<Frame>>;
+type PreviewSlot = Arc<noxid_core::media::FrameReceiver<Arc<Frame>>>;
+
 async fn serve(mut ws: tokio_tungstenite::WebSocketStream<TcpStream>, mut node: watch::Receiver<Option<Node>>) {
     let node = loop {
         if let Some(node) = node.borrow_and_update().clone() {
@@ -129,7 +143,7 @@ async fn serve(mut ws: tokio_tungstenite::WebSocketStream<TcpStream>, mut node: 
     };
 
     let (tx, mut rx) = mpsc::channel::<Vec<u8>>(SEND_QUEUE);
-    let mut forwarders: HashMap<EndpointId, (Source, JoinHandle<()>)> = HashMap::new();
+    let mut forwarders: HashMap<Tile, (Source, JoinHandle<()>)> = HashMap::new();
     let mut changes = node.changes();
 
     loop {
@@ -153,67 +167,79 @@ async fn serve(mut ws: tokio_tungstenite::WebSocketStream<TcpStream>, mut node: 
 fn sync_forwarders(
     node: &Node,
     tx: &mpsc::Sender<Vec<u8>>,
-    forwarders: &mut HashMap<EndpointId, (Source, JoinHandle<()>)>,
+    forwarders: &mut HashMap<Tile, (Source, JoinHandle<()>)>,
 ) {
-    let mut wanted: HashMap<EndpointId, Source> = HashMap::new();
+    let mut wanted: HashMap<Tile, Source> = HashMap::new();
     let snapshot = node.snapshot();
-    let mut remote = HashMap::new();
+    let mut remote: HashMap<Tile, RemoteSlot> = HashMap::new();
     for member in snapshot.room.iter().flat_map(|r| &r.members) {
         let Ok(id) = member.id.parse::<EndpointId>() else { continue };
         if member.is_self {
             continue;
         }
-        if let Some(slot) = node.frames(&id) {
-            wanted.insert(id, Source::Remote(Arc::as_ptr(&slot) as usize));
-            remote.insert(id, slot);
+        for (feed, slot) in [
+            (Feed::Screen, node.frames(&id)),
+            (Feed::Camera, node.camera_frames(&id)),
+        ] {
+            if let Some(slot) = slot {
+                wanted.insert((id, feed), Source::Remote(Arc::as_ptr(&slot) as usize));
+                remote.insert((id, feed), slot);
+            }
         }
     }
-    let preview = node.preview();
-    if let Some(slot) = &preview {
-        wanted.insert(node.id(), Source::Preview(Arc::as_ptr(slot) as usize));
+    let mut previews: HashMap<Tile, PreviewSlot> = HashMap::new();
+    for (feed, slot) in [
+        (Feed::Screen, node.preview()),
+        (Feed::Camera, node.camera_preview()),
+    ] {
+        if let Some(slot) = slot {
+            wanted.insert((node.id(), feed), Source::Preview(Arc::as_ptr(&slot) as usize));
+            previews.insert((node.id(), feed), slot);
+        }
     }
 
-    forwarders.retain(|id, (source, task)| {
-        let keep = wanted.get(id) == Some(source) && !task.is_finished();
+    forwarders.retain(|tile, (source, task)| {
+        let keep = wanted.get(tile) == Some(source) && !task.is_finished();
         if !keep {
             task.abort();
         }
         keep
     });
 
-    for (id, source) in wanted {
-        if forwarders.contains_key(&id) {
+    for (tile, source) in wanted {
+        if forwarders.contains_key(&tile) {
             continue;
         }
         let tx = tx.clone();
+        let (id, feed) = tile;
         let task = match &source {
             Source::Remote(_) => {
-                let slot = remote.remove(&id).expect("collected above");
+                let slot = remote.remove(&tile).expect("collected above");
                 tokio::spawn(async move {
                     while let Some(frame) = slot.recv().await {
-                        forward(&tx, &id, &frame, None);
+                        forward(&tx, &id, feed, &frame, None);
                     }
                 })
             }
             Source::Preview(_) => {
-                let slot = preview.clone().expect("collected above");
+                let slot = previews.remove(&tile).expect("collected above");
                 tokio::spawn(async move {
                     while let Some(frame) = slot.recv().await {
                         // Our own screen can fill the stage, so it is sent at
                         // up to 1080p, the top rung anyone receives. A larger
                         // capture (1440p, 4K) is scaled down here first: the
                         // webview never needs more, and raw 4K is 12 MB a frame.
-                        forward(&tx, &id, &frame, Some(Quality::High.height()));
+                        forward(&tx, &id, feed, &frame, Some(Quality::High.height()));
                     }
                 })
             }
         };
-        forwarders.insert(id, (source, task));
+        forwarders.insert(tile, (source, task));
     }
 }
 
-fn forward(tx: &mpsc::Sender<Vec<u8>>, id: &EndpointId, frame: &Frame, max_height: Option<u32>) {
-    match encode(id, frame, max_height) {
+fn forward(tx: &mpsc::Sender<Vec<u8>>, id: &EndpointId, feed: Feed, frame: &Frame, max_height: Option<u32>) {
+    match encode(id, feed, frame, max_height) {
         // A full queue means the webview is behind; this frame is dropped and
         // the next one goes instead.
         Ok(message) => {
@@ -223,7 +249,7 @@ fn forward(tx: &mpsc::Sender<Vec<u8>>, id: &EndpointId, frame: &Frame, max_heigh
     }
 }
 
-fn encode(id: &EndpointId, frame: &Frame, max_height: Option<u32>) -> Result<Vec<u8>> {
+fn encode(id: &EndpointId, feed: Feed, frame: &Frame, max_height: Option<u32>) -> Result<Vec<u8>> {
     let scaled;
     let frame = match max_height {
         Some(max) if frame.size().height > max => {
@@ -258,7 +284,8 @@ fn encode(id: &EndpointId, frame: &Frame, max_height: Option<u32>) -> Result<Vec
     message.extend_from_slice(&size.width.to_le_bytes());
     message.extend_from_slice(&size.height.to_le_bytes());
     message.push(color_byte);
-    message.extend_from_slice(&[0, 0, 0]);
+    message.push(feed as u8);
+    message.extend_from_slice(&[0, 0]);
     message.extend_from_slice(data);
     Ok(message)
 }

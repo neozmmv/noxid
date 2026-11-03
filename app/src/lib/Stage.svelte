@@ -4,15 +4,22 @@
   import Volume2 from "@lucide/svelte/icons/volume-2";
   import VolumeX from "@lucide/svelte/icons/volume-x";
   import { api } from "./api";
+  import FloatingCamera from "./FloatingCamera.svelte";
   import { setFullscreen as goFullscreen, view } from "./fullscreen.svelte";
   import ScreenView from "./ScreenView.svelte";
   import Select from "./Select.svelte";
   import type { MemberView, Quality } from "./types";
 
-  // The shared screen on the big stage, with its own controls: fullscreen, the
-  // sound that comes with it, and the picture quality.
+  // What one participant shows, on the big stage, with its own controls:
+  // fullscreen, the sound that comes with a screen, and the picture quality.
+  // A screen fills the stage, with their camera floating over it if that is
+  // on too; a camera on its own fills the stage instead.
   interface Props {
     member: MemberView;
+    /** Whether they are sharing a screen. */
+    hasScreen: boolean;
+    /** Whether their camera is on. */
+    hasCamera: boolean;
     quality: "auto" | Quality;
     onquality: (value: string) => void;
     /** For our own share: whether the PC's sound goes out with it. */
@@ -23,7 +30,11 @@
     onmenu: (event: MouseEvent) => void;
   }
 
-  let { member, quality, onquality, sendingSound, windowSound, onmenu }: Props = $props();
+  let { member, hasScreen, hasCamera, quality, onquality, sendingSound, windowSound, onmenu }: Props =
+    $props();
+
+  const owner = $derived(member.is_self ? "Your" : `${member.name}'s`);
+  const title = $derived(`${owner} ${hasScreen ? "screen" : "camera"}`);
 
   const fullscreen = $derived(view.fullscreen);
   // In fullscreen the controls get out of the way until the pointer moves.
@@ -82,18 +93,26 @@
     e.preventDefault();
     onmenu(e);
   }}
-  aria-label={member.is_self ? "Your screen" : `${member.name}'s screen`}
+  aria-label={title}
 >
   <div class="picture">
-    {#key member.id}
-      <ScreenView id={member.id} label={member.is_self ? "Your screen" : `${member.name}'s screen`} />
+    {#key `${member.id}:${hasScreen}`}
+      <ScreenView id={member.id} label={title} feed={hasScreen ? "screen" : "camera"} />
     {/key}
+    {#if hasScreen && hasCamera}
+      {#key member.id}
+        <FloatingCamera id={member.id} label={`${owner} camera`} />
+      {/key}
+    {/if}
   </div>
 
   <div class="bar">
-    <span class="title">{member.is_self ? "Your screen" : `${member.name}'s screen`}</span>
+    <span class="title">{title}</span>
 
-    {#if member.is_self}
+    {#if !hasScreen}
+      <!-- A camera has one quality and no sound of its own. -->
+      <span class="meta"></span>
+    {:else if member.is_self}
       <span class="meta">
         {#if !sendingSound}
           Not sending sound
@@ -116,13 +135,11 @@
           onclick={() => setSound(member.screen_volume, !member.screen_muted)}
           ondblclick={(e) => e.stopPropagation()}
         >
-          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-            {#if member.screen_muted}
-              <path fill="currentColor" d="M3 9v6h4l5 5V4L7 9H3Zm13.6 3 2.7-2.7-1.4-1.4-2.7 2.7-2.7-2.7-1.4 1.4 2.7 2.7-2.7 2.7 1.4 1.4 2.7-2.7 2.7 2.7 1.4-1.4-2.7-2.7Z" />
-            {:else}
-              <path fill="currentColor" d="M3 9v6h4l5 5V4L7 9H3Zm13.5 3A4.5 4.5 0 0 0 14 8v8a4.5 4.5 0 0 0 2.5-4ZM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6Z" />
-            {/if}
-          </svg>
+          {#if member.screen_muted}
+            <VolumeX size={20} aria-hidden="true" />
+          {:else}
+            <Volume2 size={20} aria-hidden="true" />
+          {/if}
         </button>
         <label class="volume" ondblclick={(e) => e.stopPropagation()}>
           <span class="visually-hidden">Screen sound volume</span>

@@ -66,7 +66,9 @@
           ? "muted for you"
           : member.has_video
             ? "sharing"
-            : "",
+            : member.has_camera
+              ? "camera on"
+              : "",
   );
 
   function contextmenu(event: MouseEvent) {

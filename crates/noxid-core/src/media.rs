@@ -20,6 +20,7 @@ use iroh_live::media::{
 use serde::{Deserialize, Serialize};
 
 /// The video vocabulary a frontend needs to draw what the mesh decodes.
+pub use iroh_live::media::frame_channel::FrameReceiver;
 pub use iroh_live::media::video::{Color, Frame, Size};
 
 /// How often each rung inserts a keyframe.
@@ -350,8 +351,11 @@ fn capture_source(target: &Display) -> capture::Source {
 
 /// How long a preview waits for its first picture. A window that is
 /// minimized or on another virtual desktop may never send one.
-#[cfg(not(windows))]
 const PREVIEW_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// How long a camera runs before its preview picture is taken. A camera's
+/// first frames come before its exposure has settled, often dark or green.
+const CAMERA_SETTLE: Duration = Duration::from_millis(700);
 
 /// A still of what sharing `id` (a display or window id) would show, scaled
 /// to at most `width` pixels wide, as its size and tightly packed RGBA.
@@ -367,24 +371,86 @@ pub async fn preview(id: &str, width: u32) -> Result<(Size, Vec<u8>)> {
     }
     #[cfg(not(windows))]
     {
-        capture_still(&target, width).await
+        let mut config = capture::Config::default();
+        config.source = capture_source(&target);
+        config.cursor = false;
+        capture_still(&config, width, Duration::ZERO).await
     }
 }
 
-#[cfg(not(windows))]
-async fn capture_still(target: &Display, width: u32) -> Result<(Size, Vec<u8>)> {
-    use iroh_live::media::video::{Output, convert, resize};
+/// A still from camera `id`, like [`preview`]. Cameras are opened one at a
+/// time: many cannot be opened twice at once, and several previews asked for
+/// together would otherwise fight over a shared device.
+pub async fn camera_preview(id: &str, width: u32) -> Result<(Size, Vec<u8>)> {
+    static ONE_AT_A_TIME: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _turn = ONE_AT_A_TIME.lock().await;
+    #[cfg(windows)]
+    if let Some(name) = id.strip_prefix(DSHOW_PREFIX) {
+        return dshow_still(name, width).await;
+    }
+    let native = capture_still(&camera_config(Some(id)), width, CAMERA_SETTLE).await;
+    // The same fallback as `resolve_camera`: a camera Media Foundation will
+    // not start may work through DirectShow.
+    #[cfg(windows)]
+    if native.is_err()
+        && let Some(name) = native_name(id).await
+        && let Ok(still) = dshow_still(&name, width).await
+    {
+        return Ok(still);
+    }
+    native
+}
 
-    let mut config = capture::Config::default();
-    config.source = capture_source(target);
-    config.cursor = false;
-    let mut stream = capture::open(&config).await.map_err(|e| anyhow::anyhow!("{e:#}"))?;
-    let frame = tokio::time::timeout(PREVIEW_TIMEOUT, stream.read())
+#[cfg(windows)]
+async fn dshow_still(name: &str, width: u32) -> Result<(Size, Vec<u8>)> {
+    let owned = name.to_string();
+    let mut frames = tokio::task::spawn_blocking(move || crate::dshow::open(&owned)).await??;
+    let read = async {
+        let started = std::time::Instant::now();
+        loop {
+            let frame = frames
+                .recv()
+                .await
+                .context("the camera stopped before its first picture")?;
+            if started.elapsed() >= CAMERA_SETTLE {
+                return anyhow::Ok(frame);
+            }
+        }
+    };
+    let frame = tokio::time::timeout(PREVIEW_TIMEOUT + CAMERA_SETTLE, read)
         .await
-        .context("no picture arrived in time")?
-        .map_err(|e| anyhow::anyhow!("{e:#}"))?
-        .context("the capture ended before its first picture")?;
+        .context("no picture arrived in time")??;
+    drop(frames);
+    shrink(&frame, width)
+}
+
+/// Opens `config`, keeps the newest picture after `settle` (or the first one,
+/// for no settling), and closes the capture again.
+async fn capture_still(config: &capture::Config, width: u32, settle: Duration) -> Result<(Size, Vec<u8>)> {
+    let mut stream = capture::open(config).await.map_err(|e| anyhow::anyhow!("{e:#}"))?;
+    let read = async {
+        let started = std::time::Instant::now();
+        loop {
+            let frame = stream
+                .read()
+                .await
+                .map_err(|e| anyhow::anyhow!("{e:#}"))?
+                .context("the capture ended before its first picture")?;
+            if started.elapsed() >= settle {
+                return anyhow::Ok(frame);
+            }
+        }
+    };
+    let frame = tokio::time::timeout(PREVIEW_TIMEOUT + settle, read)
+        .await
+        .context("no picture arrived in time")??;
     drop(stream);
+    shrink(&frame, width)
+}
+
+/// Scales `frame` to `width` pixels wide, as its size and tightly packed RGBA.
+fn shrink(frame: &Frame, width: u32) -> Result<(Size, Vec<u8>)> {
+    use iroh_live::media::video::{Output, convert, resize};
 
     let source = frame.size();
     let height = (u64::from(source.height) * u64::from(width) / u64::from(source.width.max(1))) as u32;
@@ -437,6 +503,211 @@ impl Screen {
             Screen::Test => iroh_live::media::test_source::video(test_pattern(), rate.fps()),
         }
     }
+}
+
+/// A camera that can be shared.
+#[derive(Debug, Clone, Serialize)]
+pub struct CameraInfo {
+    /// What selects it: an opaque id from the platform's camera API.
+    pub id: String,
+    pub name: String,
+}
+
+/// Ids of cameras reached through DirectShow rather than the media stack:
+/// this prefix and the camera's name.
+#[cfg(windows)]
+const DSHOW_PREFIX: &str = "dshow:";
+
+/// The cameras this machine has. A machine without any, or where they cannot
+/// be listed, gets an empty list.
+///
+/// On Windows, DirectShow cameras the media stack cannot see (most virtual
+/// ones: OBS, NVIDIA Broadcast) are added after its own, once per name.
+pub async fn cameras() -> Vec<CameraInfo> {
+    #[allow(unused_mut, reason = "only Windows adds to it")]
+    let mut list: Vec<CameraInfo> = match capture::cameras().await {
+        Ok(cameras) => cameras
+            .into_iter()
+            .map(|c| CameraInfo { id: c.id, name: c.name })
+            .collect(),
+        Err(e) => {
+            tracing::debug!("cameras cannot be listed here: {e:#}");
+            Vec::new()
+        }
+    };
+    #[cfg(windows)]
+    match tokio::task::spawn_blocking(crate::dshow::cameras).await {
+        Ok(Ok(names)) => {
+            for name in names {
+                if !list.iter().any(|c| c.name == name) {
+                    list.push(CameraInfo {
+                        id: format!("{DSHOW_PREFIX}{name}"),
+                        name,
+                    });
+                }
+            }
+        }
+        Ok(Err(e)) => tracing::debug!("DirectShow cameras cannot be listed: {e:#}"),
+        Err(e) => tracing::debug!("DirectShow listing failed: {e}"),
+    }
+    list
+}
+
+/// A camera that has been checked and is known to open, and the way to open
+/// it. Made by [`resolve_camera`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CameraSource {
+    /// The id it was chosen by, as [`cameras`] listed it.
+    pub id: String,
+    backend: Backend,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Backend {
+    /// The media stack's own capture (Media Foundation on Windows).
+    Native,
+    /// DirectShow, by camera name.
+    #[cfg(windows)]
+    DirectShow(String),
+}
+
+/// The name the media stack lists camera `id` under.
+#[cfg(windows)]
+async fn native_name(id: &str) -> Option<String> {
+    capture::cameras()
+        .await
+        .ok()?
+        .into_iter()
+        .find(|c| c.id == id)
+        .map(|c| c.name)
+}
+
+/// Finds out how camera `id` opens, by opening it once and closing it again.
+/// Publishing opens the camera in a task of its own, so without this a camera
+/// that is missing, busy or (for a virtual one) not running would look
+/// switched on while sending nothing.
+///
+/// On Windows a camera the media stack lists but cannot start is tried again
+/// through DirectShow under the same name: DroidCam's Windows 11 source, for
+/// one, fails in Media Foundation (Windows' own Camera app included) while
+/// its DirectShow side works.
+pub async fn resolve_camera(id: &str) -> Result<CameraSource> {
+    #[cfg(windows)]
+    if let Some(name) = id.strip_prefix(DSHOW_PREFIX) {
+        check_dshow(name).await?;
+        return Ok(CameraSource {
+            id: id.to_string(),
+            backend: Backend::DirectShow(name.to_string()),
+        });
+    }
+
+    let native = capture::open(&camera_config(Some(id))).await.map(drop);
+    let Err(error) = native else {
+        return Ok(CameraSource {
+            id: id.to_string(),
+            backend: Backend::Native,
+        });
+    };
+    let detail = format!("{error:#}");
+
+    #[cfg(windows)]
+    if let Some(name) = native_name(id).await {
+        match check_dshow(&name).await {
+            Ok(()) => {
+                tracing::info!(%name, "camera opens through DirectShow instead: {detail}");
+                return Ok(CameraSource {
+                    id: id.to_string(),
+                    backend: Backend::DirectShow(name),
+                });
+            }
+            Err(e) => tracing::debug!(%name, "nor through DirectShow: {e:#}"),
+        }
+    }
+
+    // Windows found the camera but would not start it, by either route.
+    if detail.contains("activate camera") {
+        anyhow::bail!(
+            "Windows would not start this camera. If it is a virtual camera (DroidCam, OBS), make \
+             sure its app is running and connected; otherwise close any other app using it. \
+             ({detail})"
+        )
+    }
+    anyhow::bail!(detail)
+}
+
+/// Opens a DirectShow camera and closes it again.
+#[cfg(windows)]
+async fn check_dshow(name: &str) -> Result<()> {
+    let name = name.to_string();
+    let frames = tokio::task::spawn_blocking(move || crate::dshow::open(&name)).await??;
+    drop(frames);
+    // The capture thread notices the drop on its next poll; give it time to
+    // let go, or a camera that allows one user would refuse the real open.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    Ok(())
+}
+
+/// A DirectShow camera as a stream of frames. The camera opens on the first
+/// poll, off the async threads, and closes when the stream is dropped.
+#[cfg(windows)]
+fn dshow_frames(name: String) -> n0_future::boxed::BoxStream<Frame> {
+    use tokio::sync::mpsc::Receiver;
+    Box::pin(n0_future::stream::unfold(None::<Receiver<Frame>>, move |open| {
+        let name = name.clone();
+        async move {
+            let mut frames = match open {
+                Some(frames) => frames,
+                None => match tokio::task::spawn_blocking(move || crate::dshow::open(&name)).await {
+                    Ok(Ok(frames)) => frames,
+                    Ok(Err(e)) => {
+                        tracing::warn!("camera would not open: {e:#}");
+                        return None;
+                    }
+                    Err(_) => return None,
+                },
+            };
+            let frame = frames.recv().await?;
+            Some((frame, Some(frames)))
+        }
+    }))
+}
+
+/// The camera's one rendition. A face needs far less than a screen of text,
+/// and a camera share is usually watched small, so one 720p rung at a modest
+/// bitrate is enough; a ladder would cost a second encode for little gain.
+pub const CAMERA_RENDITION: &str = "camera";
+const CAMERA_SIZE: Size = Size {
+    width: 1280,
+    height: 720,
+};
+const CAMERA_FPS: u32 = 30;
+const CAMERA_BITRATE: u64 = 1_500_000;
+
+fn camera_config(device: Option<&str>) -> capture::Config {
+    let mut config = capture::Config::default();
+    config.source = capture::Source::Camera(device.map(str::to_string));
+    // Preferences: a camera that cannot do 720p30 opens at its nearest mode,
+    // and the rendition keeps whatever size it delivers (and its aspect).
+    config.width = Some(CAMERA_SIZE.width);
+    config.height = Some(CAMERA_SIZE.height);
+    config.framerate = iroh_live::media::video::Rate::new(CAMERA_FPS, 1).ok();
+    config
+}
+
+/// Starts sending `camera` on `broadcast`, replacing whatever it sent before.
+pub fn share_camera(broadcast: &LocalBroadcast, camera: &CameraSource) -> Result<()> {
+    let source = match &camera.backend {
+        Backend::Native => VideoSource::Capture(camera_config(Some(&camera.id))),
+        #[cfg(windows)]
+        Backend::DirectShow(name) => VideoSource::Frames(dshow_frames(name.clone())),
+    };
+    let rendition = VideoRendition::new(CAMERA_RENDITION)
+        .with_bitrate(CAMERA_BITRATE)
+        .with_keyframe_interval(KEYFRAME_INTERVAL);
+    broadcast
+        .video()
+        .set_renditions(source, vec![rendition])
+        .map_err(|e| anyhow::anyhow!("{e:#}"))
 }
 
 /// What the microphone track carries.

@@ -1,14 +1,17 @@
 <script lang="ts">
   import { api } from "./api";
-  import type { DisplayInfo, MemberView, Quality, QualityMode, Snapshot } from "./types";
   import { setDeafened, setMic } from "./controls";
+  import type { CameraInfo, DisplayInfo, MemberView, Quality, QualityMode, Snapshot } from "./types";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import Headphones from "@lucide/svelte/icons/headphones";
   import HeadphoneOff from "@lucide/svelte/icons/headphone-off";
   import Mic from "@lucide/svelte/icons/mic";
   import MicOff from "@lucide/svelte/icons/mic-off";
+  import Video from "@lucide/svelte/icons/video";
+  import VideoOff from "@lucide/svelte/icons/video-off";
   import AudioSettings from "./AudioSettings.svelte";
   import Confirm from "./Confirm.svelte";
+  import CameraPicker from "./CameraPicker.svelte";
   import Orb from "./Orb.svelte";
   import PeerMenu from "./PeerMenu.svelte";
   import ScreenMenu from "./ScreenMenu.svelte";
@@ -23,8 +26,14 @@
   const room = $derived(snapshot.room!);
   const members = $derived(room.members);
 
-  // Who is sharing right now, ourselves included.
-  const sharers = $derived(members.filter((m) => (m.is_self ? snapshot.sharing : m.has_video)));
+  // What each participant sends besides their voice. Our own comes from what
+  // we asked for, everyone else's from what arrives.
+  const hasScreen = (m: MemberView) => (m.is_self ? snapshot.sharing : m.has_video);
+  const hasCamera = (m: MemberView) => (m.is_self ? snapshot.camera_on : m.has_camera);
+
+  // Who is sending a picture right now (a screen, a camera or both),
+  // ourselves included.
+  const sharers = $derived(members.filter((m) => hasScreen(m) || hasCamera(m)));
 
   // The share on the big stage. The first remote sharer by default, since
   // that is what people are there to look at; clicking an orb changes it.
@@ -96,7 +105,40 @@
     }
   }
 
-  const shareLabel = (m: MemberView) => (m.is_self ? "Your screen" : `${m.name}'s screen`);
+  const shareLabel = (m: MemberView) =>
+    `${m.is_self ? "Your" : `${m.name}'s`} ${hasScreen(m) ? "screen" : "camera"}`;
+
+  // The camera: off with one click; on by choosing it in a picker that shows
+  // a picture from each camera, even when there is only one, so you see what
+  // you are about to send.
+  let cameraChoices = $state<CameraInfo[] | null>(null);
+
+  async function toggleCamera() {
+    error = null;
+    if (snapshot.camera_on) {
+      await api.shareCamera(null).catch((e) => (error = String(e)));
+      return;
+    }
+    try {
+      const cameras = await api.cameras();
+      if (cameras.length === 0) {
+        error = "No camera was found. Check that one is plugged in and not in use by another app.";
+      } else {
+        cameraChoices = cameras;
+      }
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  async function startCamera(id: string) {
+    cameraChoices = null;
+    try {
+      await api.shareCamera(id);
+    } catch (e) {
+      error = String(e);
+    }
+  }
 
   let showAudio = $state(false);
 
@@ -221,6 +263,8 @@
       <div class="screens" class:with-others={others.length > 0}>
         <Stage
           member={focused}
+          hasScreen={hasScreen(focused)}
+          hasCamera={hasCamera(focused)}
           quality={qualityChoice(focused)}
           onquality={(value) => chooseQuality(focused.id, value)}
           sendingSound={snapshot.screen_audio}
@@ -239,7 +283,9 @@
                 onkeydown={(e) => thumbKey(e, m.id)}
                 oncontextmenu={(e) => openScreenMenu(m.id, e)}
               >
-                <div class="thumb-picture"><ScreenView id={m.id} label={shareLabel(m)} /></div>
+                <div class="thumb-picture">
+                  <ScreenView id={m.id} label={shareLabel(m)} feed={hasScreen(m) ? "screen" : "camera"} />
+                </div>
                 <span>{shareLabel(m)}</span>
               </div>
             {/each}
@@ -296,6 +342,21 @@
         <HeadphoneOff size={22} aria-hidden="true" />
       {:else}
         <Headphones size={22} aria-hidden="true" />
+      {/if}
+    </button>
+    <button
+      class="mic"
+      class:on={snapshot.camera_on}
+      aria-pressed={snapshot.camera_on}
+      aria-haspopup={snapshot.camera_on ? undefined : "dialog"}
+      aria-label={snapshot.camera_on ? "Turn camera off" : "Turn camera on"}
+      title={snapshot.camera_on ? "Turn camera off" : "Turn camera on"}
+      onclick={toggleCamera}
+    >
+      {#if snapshot.camera_on}
+        <Video size={22} aria-hidden="true" />
+      {:else}
+        <VideoOff size={22} aria-hidden="true" />
       {/if}
     </button>
     <button class="button" aria-pressed={snapshot.sharing} onclick={toggleShare}>
@@ -358,13 +419,20 @@
       x={screenMenu.x}
       y={screenMenu.y}
       onStage={focused?.id === screenMenuMember.id}
+      hasScreen={hasScreen(screenMenuMember)}
+      hasCamera={hasCamera(screenMenuMember)}
       quality={qualityChoice(screenMenuMember)}
       onquality={(value) => chooseQuality(screenMenuMember.id, value)}
       onstage={() => (chosen = screenMenuMember.id)}
       onstop={() => api.shareScreen(null)}
+      oncameraoff={() => api.shareCamera(null)}
       onclose={() => (screenMenu = null)}
     />
   {/key}
+{/if}
+
+{#if cameraChoices}
+  <CameraPicker cameras={cameraChoices} onpick={startCamera} onclose={() => (cameraChoices = null)} />
 {/if}
 
 {#if picking}
@@ -595,6 +663,16 @@
 
   .mic.off:hover {
     background: #ee7a81;
+  }
+
+  /* The camera is off by default, so "on" is the state worth marking. */
+  .mic.on {
+    background: var(--lamp);
+    color: var(--ink);
+  }
+
+  .mic.on:hover {
+    background: #ffc964;
   }
 
   .spacer {

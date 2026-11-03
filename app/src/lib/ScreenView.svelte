@@ -2,11 +2,12 @@
   import { onMount } from "svelte";
   import { onFrames } from "./api";
   import { I420Renderer } from "./renderer";
-  import type { Frame } from "./types";
+  import type { Feed, Frame } from "./types";
 
-  // Draws one participant's screen share. Frames arrive over the socket as
-  // fast as they decode; drawing happens at most once per display refresh.
-  let { id, label }: { id: string; label: string } = $props();
+  // Draws one participant's screen share or camera. Frames arrive over the
+  // socket as fast as they decode; drawing happens at most once per display
+  // refresh.
+  let { id, label, feed = "screen" }: { id: string; label: string; feed?: Feed } = $props();
 
   let canvas: HTMLCanvasElement;
   let failed = $state<string | null>(null);
@@ -30,7 +31,7 @@
         waiting = false;
       }
     };
-    const stop = onFrames(id, (frame) => {
+    const stop = onFrames(id, feed, (frame) => {
       pending = frame;
       if (!scheduled) scheduled = requestAnimationFrame(draw);
     });
@@ -45,7 +46,7 @@
 <div class="screen">
   <canvas bind:this={canvas} aria-label={label}></canvas>
   {#if failed}
-    <p class="overlay">This screen can't be shown: {failed}</p>
+    <p class="overlay">This picture can't be shown: {failed}</p>
   {:else if waiting}
     <p class="overlay">Waiting for the picture…</p>
   {/if}

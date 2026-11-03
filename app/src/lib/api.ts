@@ -6,7 +6,9 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AudioDevices,
   AudioStream,
+  CameraInfo,
   DisplayInfo,
+  Feed,
   Levels,
   Frame,
   FrameSocket,
@@ -28,6 +30,11 @@ export const api = {
   setMic: (on: boolean) => invoke<void>("set_mic", { on }),
   displays: () => invoke<DisplayInfo[]>("displays"),
   shareScreen: (display: string | null) => invoke<void>("share_screen", { display }),
+  cameras: () => invoke<CameraInfo[]>("cameras"),
+  /** A still from a camera, in the layout sharePreview uses. */
+  cameraPreview: (id: string) => invoke<ArrayBuffer>("camera_preview", { id }),
+  /** Turns the camera with this id on, or the camera off with null. */
+  shareCamera: (camera: string | null) => invoke<void>("share_camera", { camera }),
   /** A still of a display or window: width, height (u32 LE), then RGBA. */
   sharePreview: (id: string) => invoke<ArrayBuffer>("share_preview", { id }),
   setMaxQuality: (quality: Quality) => invoke<void>("set_max_quality", { quality }),
@@ -55,7 +62,7 @@ export const onLevels = (handler: (l: Levels) => void): Promise<UnlistenFn> =>
   listen<Levels>("levels", (e) => handler(e.payload));
 
 // Frame socket. Every message is one frame: a 44-byte header (endpoint id,
-// width, height, colour space) and the I420 planes.
+// width, height, colour space, feed) and the I420 planes.
 const HEADER_LEN = 44;
 
 type Sink = (frame: Frame) => void;
@@ -81,7 +88,8 @@ export async function connectFrames(): Promise<void> {
     ws.onmessage = (event: MessageEvent<ArrayBuffer>) => {
       const buffer = event.data;
       const view = new DataView(buffer);
-      const id = hex(new Uint8Array(buffer, 0, 32));
+      const feed: Feed = view.getUint8(41) === 1 ? "camera" : "screen";
+      const id = key(hex(new Uint8Array(buffer, 0, 32)), feed);
       const frame: Frame = {
         width: view.getUint32(32, true),
         height: view.getUint32(36, true),
@@ -99,8 +107,16 @@ export async function connectFrames(): Promise<void> {
   open();
 }
 
-/** Registers the drawer for one participant's frames. Returns the unsubscribe. */
-export function onFrames(id: string, sink: Sink): () => void {
+/** Frames are filed by participant and feed: someone can send a screen and a
+ *  camera at once. */
+function key(id: string, feed: Feed): string {
+  return feed === "camera" ? `${id}:camera` : id;
+}
+
+/** Registers the drawer for one participant's screen or camera. Returns the
+ *  unsubscribe. */
+export function onFrames(member: string, feed: Feed, sink: Sink): () => void {
+  const id = key(member, feed);
   let set = sinks.get(id);
   if (!set) sinks.set(id, (set = new Set()));
   set.add(sink);

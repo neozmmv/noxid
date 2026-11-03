@@ -33,7 +33,8 @@ n0-future = "0.3"
 bytes = "1"
 
 # WASAPI process loopback, for sharing the PC's sound without Noxid's own
-# output in it, and GDI for border-free stills in the share picker. Same
+# output in it, GDI for border-free stills in the share picker, and
+# DirectShow for the cameras Media Foundation cannot open. Same
 # release moq-video already compiles.
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
@@ -44,6 +45,8 @@ windows = { version = "0.62", features = [
     "Win32_UI_HiDpi",
     "Win32_UI_WindowsAndMessaging",
     "Win32_Media_Audio",
+    "Win32_Media_DirectShow",
+    "Win32_Media_MediaFoundation",
     "Win32_Media_Multimedia",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",

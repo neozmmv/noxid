@@ -117,6 +117,7 @@ pub(crate) async fn run(inner: Arc<Inner>, mut roster: watch::Receiver<Vec<Endpo
                     close_sessions(&sessions, &id);
                     inner.peers.lock().unwrap().remove(&id);
                     inner.tiles.lock().unwrap().remove(&id);
+                    inner.camera_tiles.lock().unwrap().remove(&id);
                     info!(peer = %id.fmt_short(), "peer left the call");
                 }
                 // Sessions from peers that never had a task (they dialed us and
@@ -176,8 +177,8 @@ fn close_sessions(sessions: &Sessions, id: &EndpointId) {
 }
 
 /// Keeps one peer connected for as long as it is on the roster. One session
-/// carries two independent subscriptions: their voice, and their screen share
-/// whenever they have one. Either ending on its own is normal (a share stops,
+/// carries three independent subscriptions: their voice, and their screen
+/// share and camera whenever they have them. Either ending on its own is normal (a share stops,
 /// a voice broadcast restarts); the session ending starts everything over.
 async fn peer_task(inner: Arc<Inner>, id: EndpointId, sessions: Sessions) {
     let mut backoff = BACKOFF_MIN;
@@ -190,6 +191,7 @@ async fn peer_task(inner: Arc<Inner>, id: EndpointId, sessions: Sessions) {
                 tokio::select! {
                     _ = voice_loop(&inner, id, &session) => {}
                     _ = screen_loop(&inner, id, &session) => {}
+                    _ = camera_loop(&inner, id, &session) => {}
                     _ = session.closed() => {}
                 }
                 info!(peer = %id.fmt_short(), "disconnected");
@@ -198,6 +200,7 @@ async fn peer_task(inner: Arc<Inner>, id: EndpointId, sessions: Sessions) {
         }
 
         inner.tiles.lock().unwrap().remove(&id);
+        inner.camera_tiles.lock().unwrap().remove(&id);
         inner.levels.lock().unwrap().remove(&id);
         inner.peers.lock().unwrap().insert(id, PeerView::default());
         inner.bump();
@@ -456,6 +459,46 @@ async fn serve_screen(inner: &Inner, id: EndpointId, sub: &Subscription) {
             v.width = width;
             v.height = height;
         });
+    }
+}
+
+/// Their camera, each time they turn it on. One rendition, so there is no
+/// quality to choose: the picture goes straight to the renderer.
+async fn camera_loop(inner: &Inner, id: EndpointId, session: &MoqSession) {
+    let path = crate::camera_path(&id);
+    loop {
+        let sub = subscribe(session, &path).await;
+        serve_camera(inner, id, &sub).await;
+        inner.camera_tiles.lock().unwrap().remove(&id);
+        update_view(inner, id, |v| v.has_camera = false);
+    }
+}
+
+async fn serve_camera(inner: &Inner, id: EndpointId, sub: &Subscription) {
+    let broadcast = sub.broadcast();
+    let mut video: Option<VideoTrack> = None;
+    let mut tick = tokio::time::interval(REFRESH);
+    loop {
+        tokio::select! {
+            _ = tick.tick() => {}
+            _ = broadcast.closed() => return,
+        }
+        match (broadcast.has_video(), video.is_some()) {
+            (true, false) => match broadcast.video().await {
+                Ok(track) => {
+                    inner.camera_tiles.lock().unwrap().insert(id, track.frame_slot());
+                    video = Some(track);
+                    update_view(inner, id, |v| v.has_camera = true);
+                }
+                Err(e) => debug!(peer = %id.fmt_short(), "camera would not open: {e:#}"),
+            },
+            (false, true) => {
+                video = None;
+                inner.camera_tiles.lock().unwrap().remove(&id);
+                update_view(inner, id, |v| v.has_camera = false);
+            }
+            _ => {}
+        }
     }
 }
 

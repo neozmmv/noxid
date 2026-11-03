@@ -18,6 +18,8 @@ export interface MemberView {
   has_video: boolean;
   /** Whether their screen share carries the PC's sound. */
   has_screen_audio: boolean;
+  /** Whether their camera is on. */
+  has_camera: boolean;
   rendition: string | null;
   fps: number;
   width: number;
@@ -68,7 +70,18 @@ export interface Snapshot {
   window_audio_supported: boolean;
   /** Whether the share in progress is of one window. */
   sharing_window: boolean;
+  camera_on: boolean;
+  /** The camera in use; null is the default one. */
+  camera_device: string | null;
 }
+
+export interface CameraInfo {
+  id: string;
+  name: string;
+}
+
+/** Which of a participant's pictures a view shows. */
+export type Feed = "screen" | "camera";
 
 export interface AudioDevice {
   id: string;

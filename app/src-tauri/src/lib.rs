@@ -256,6 +256,18 @@ async fn share_preview(id: String) -> CommandResult<tauri::ipc::Response> {
     Ok(tauri::ipc::Response::new(bytes))
 }
 
+/// A still from a camera for the camera picker, in the same layout as
+/// [`share_preview`].
+#[tauri::command]
+async fn camera_preview(id: String) -> CommandResult<tauri::ipc::Response> {
+    let (size, rgba) = media::camera_preview(&id, PREVIEW_WIDTH).await.map_err(err)?;
+    let mut bytes = Vec::with_capacity(8 + rgba.len());
+    bytes.extend_from_slice(&size.width.to_le_bytes());
+    bytes.extend_from_slice(&size.height.to_le_bytes());
+    bytes.extend_from_slice(&rgba);
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
 /// Starts sharing the display or window with this id, or stops sharing with
 /// `None`.
 #[tauri::command]
@@ -266,6 +278,27 @@ async fn share_screen(state: tauri::State<'_, AppState>, display: Option<String>
         None => None,
     };
     node.share_screen(screen).map_err(err)
+}
+
+/// The cameras this machine has.
+#[tauri::command]
+async fn cameras() -> Vec<media::CameraInfo> {
+    media::cameras().await
+}
+
+/// Turns the camera with this id on, or the camera off with `None`.
+#[tauri::command]
+async fn share_camera(state: tauri::State<'_, AppState>, camera: Option<String>) -> CommandResult<()> {
+    let node = node(&state).await?;
+    let camera = match camera {
+        Some(id) => Some(
+            media::resolve_camera(&id)
+                .await
+                .map_err(|e| format!("The camera could not be opened: {e:#}"))?,
+        ),
+        None => None,
+    };
+    node.share_camera(camera).map_err(err)
 }
 
 #[tauri::command]
@@ -393,6 +426,9 @@ pub fn run() {
             set_mic,
             displays,
             share_screen,
+            cameras,
+            camera_preview,
+            share_camera,
             set_max_quality,
             set_framerate,
             set_bitrate,

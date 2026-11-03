@@ -4,6 +4,8 @@
 
 mod admin;
 pub mod audio;
+#[cfg(windows)]
+mod dshow;
 mod gate;
 pub mod identity;
 pub mod log;
@@ -31,4 +33,10 @@ pub fn voice_path(id: &iroh::EndpointId) -> String {
 /// its sound has a volume of its own on the receiving end.
 pub fn screen_path(id: &iroh::EndpointId) -> String {
     format!("noxid/1/screen/{id}")
+}
+
+/// Where a member publishes their camera. Separate from the screen share, so
+/// either can run without the other and both can run at once.
+pub fn camera_path(id: &iroh::EndpointId) -> String {
+    format!("noxid/1/camera/{id}")
 }

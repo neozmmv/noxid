@@ -22,7 +22,7 @@ use tracing::{info, warn};
 use crate::admin::{self, ADMIN_ALPN, AdminHandler};
 use crate::audio::{self, SystemAudio, Voice};
 use crate::gate::MemberGate;
-use crate::media::{self, Framerate, Mic, Outgoing, Quality, Screen};
+use crate::media::{self, CameraSource, Framerate, Mic, Outgoing, Quality, Screen};
 use crate::room::{self, Code, Member, Room};
 
 /// How long a node waits for a relay at startup before carrying on. Until it
@@ -123,6 +123,9 @@ pub struct Snapshot {
     pub window_audio_supported: bool,
     /// Whether the share in progress is of one window.
     pub sharing_window: bool,
+    /// Whether our camera is on, and which one, by its id from the camera list.
+    pub camera_on: bool,
+    pub camera_device: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -155,6 +158,8 @@ pub struct PeerView {
     pub has_video: bool,
     /// Whether their share carries the PC's sound.
     pub has_screen_audio: bool,
+    /// Whether their camera is on.
+    pub has_camera: bool,
     pub rendition: Option<String>,
     pub fps: u32,
     pub width: u32,
@@ -202,6 +207,11 @@ struct Local {
     voice: Option<LocalBroadcast>,
     /// Our screen share. Exists while we share.
     screen_broadcast: Option<LocalBroadcast>,
+    /// Our camera. Exists while it is on in a room.
+    camera_broadcast: Option<LocalBroadcast>,
+    /// The camera wanted on. Kept outside a room too, like the screen, so it
+    /// starts when the next room does.
+    camera: Option<CameraSource>,
     mic_on: bool,
     mic_device: Option<String>,
     output_device: Option<String>,
@@ -237,6 +247,8 @@ pub(crate) struct Inner {
     pub levels: Mutex<HashMap<EndpointId, f32>>,
     /// Decoded screen share frames per participant, for a renderer.
     pub tiles: Mutex<HashMap<EndpointId, Arc<FrameReceiver<Frame>>>>,
+    /// Decoded camera frames per participant.
+    pub camera_tiles: Mutex<HashMap<EndpointId, Arc<FrameReceiver<Frame>>>>,
     /// Receiver-side rendition choice per participant.
     pub quality_modes: Mutex<HashMap<EndpointId, QualityMode>>,
     /// How loud we hear each participant.
@@ -285,6 +297,8 @@ impl Node {
             local: Mutex::new(Local {
                 voice: None,
                 screen_broadcast: None,
+                camera_broadcast: None,
+                camera: None,
                 mic_on: !config.start_muted,
                 mic_device: config.mic_device,
                 output_device: config.output_device,
@@ -300,6 +314,7 @@ impl Node {
             peers: Mutex::new(HashMap::new()),
             levels: Mutex::new(HashMap::new()),
             tiles: Mutex::new(HashMap::new()),
+            camera_tiles: Mutex::new(HashMap::new()),
             quality_modes: Mutex::new(HashMap::new()),
             audio_prefs: Mutex::new(HashMap::new()),
             deafened: std::sync::atomic::AtomicBool::new(false),
@@ -601,6 +616,29 @@ impl Node {
         result
     }
 
+    /// Turns `camera` on (see [`media::resolve_camera`]), or the camera off
+    /// with `None`. Switching cameras keeps the same broadcast, so viewers keep
+    /// watching.
+    pub fn share_camera(&self, camera: Option<CameraSource>) -> Result<()> {
+        let mut local = self.inner.local.lock().unwrap();
+        local.camera = camera;
+        let result = if local.voice.is_some() {
+            self.inner.apply_camera(&mut local)
+        } else {
+            Ok(())
+        };
+        if result.is_err() {
+            // Nothing is sending, so nothing should say it is.
+            local.camera = None;
+            if let Some(broadcast) = local.camera_broadcast.take() {
+                finish_later(broadcast);
+            }
+        }
+        drop(local);
+        self.inner.bump();
+        result
+    }
+
     /// Whether a share carries the PC's sound. Applies to a share in progress
     /// immediately.
     pub fn set_screen_audio(&self, on: bool) {
@@ -675,6 +713,22 @@ impl Node {
     /// The latest-frame slot of a participant's screen share, while they share.
     pub fn frames(&self, id: &EndpointId) -> Option<Arc<FrameReceiver<Frame>>> {
         self.inner.tiles.lock().unwrap().get(id).cloned()
+    }
+
+    /// Decoded camera frames for one participant, while their camera is on.
+    pub fn camera_frames(&self, id: &EndpointId) -> Option<Arc<FrameReceiver<Frame>>> {
+        self.inner.camera_tiles.lock().unwrap().get(id).cloned()
+    }
+
+    /// What our own camera sends, for a self view.
+    pub fn camera_preview(&self) -> Option<Arc<FrameReceiver<Arc<Frame>>>> {
+        self.inner
+            .local
+            .lock()
+            .unwrap()
+            .camera_broadcast
+            .as_ref()
+            .and_then(|b| b.preview())
     }
 
     /// What our own screen share looks like, for a self view.
@@ -756,7 +810,35 @@ impl Inner {
         local.voice = Some(voice);
         local.mic_published = false;
         self.apply_mic(&mut local);
+        // A camera that will not open costs the camera, not the room.
+        if let Err(e) = self.apply_camera(&mut local) {
+            warn!("camera unavailable: {e:#}");
+            local.camera = None;
+            self.notice(Notice::Error(format!("The camera could not be opened: {e:#}")));
+        }
         self.apply_screen(&mut local)
+    }
+
+    /// Makes the camera broadcast match `local.camera`: started, moved to
+    /// another camera, or ended.
+    fn apply_camera(&self, local: &mut Local) -> Result<()> {
+        let Some(camera) = local.camera.clone() else {
+            if let Some(previous) = local.camera_broadcast.take() {
+                finish_later(previous);
+            }
+            return Ok(());
+        };
+        if let Some(broadcast) = &local.camera_broadcast {
+            return media::share_camera(broadcast, &camera);
+        }
+        let path = crate::camera_path(&self.own_id());
+        let broadcast = self
+            .live
+            .publish(path)
+            .map_err(|e| anyhow::anyhow!("{e:#}"))?;
+        media::share_camera(&broadcast, &camera)?;
+        local.camera_broadcast = Some(broadcast);
+        Ok(())
     }
 
     /// Makes the open microphone and what the voice broadcast carries match
@@ -875,12 +957,17 @@ impl Inner {
     /// Drops out of the room locally: stops publishing, forgets the roster,
     /// and lets the mesh close every link. Telling others is the caller's job.
     pub async fn leave_local(&self) {
-        let (voice, screen) = {
+        let (voice, screen, camera) = {
             let mut local = self.local.lock().unwrap();
             local.screen = None;
-            (local.voice.take(), local.screen_broadcast.take())
+            local.camera = None;
+            (
+                local.voice.take(),
+                local.screen_broadcast.take(),
+                local.camera_broadcast.take(),
+            )
         };
-        for broadcast in [voice, screen].into_iter().flatten() {
+        for broadcast in [voice, screen, camera].into_iter().flatten() {
             broadcast.finish().await;
         }
         {
@@ -971,6 +1058,8 @@ impl Inner {
             screen_audio_supported: audio::system_audio_supported(),
             window_audio_supported: audio::window_audio_supported(),
             sharing_window: local.screen.as_ref().and_then(Screen::window).is_some(),
+            camera_on: local.camera.is_some(),
+            camera_device: local.camera.as_ref().map(|c| c.id.clone()),
         }
     }
 
