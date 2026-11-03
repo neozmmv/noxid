@@ -1,0 +1,6 @@
+# One Rust for CI and every machine. `stable` moves every six weeks, and each
+# move throws away CI's build cache and can bring new clippy lints into a
+# release nobody touched. Bump this on purpose.
+[toolchain]
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]

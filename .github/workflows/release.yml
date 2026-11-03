@@ -1,7 +1,8 @@
 name: Release
 
-# Runs only for release tags. Lint and tests gate the build, and the build
-# gates the release: if any of them fails, nothing is published.
+# Runs only for release tags. Lint, tests and the installers build side by
+# side, and the release waits for all of them: if any fails, nothing is
+# published.
 on:
   push:
     # vMAJOR.MINOR.PATCH, e.g. v0.1.0. Other tags build nothing.
@@ -24,9 +25,9 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
+      # The version and components come from rust-toolchain.toml.
+      - name: rust
+        run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
@@ -46,12 +47,21 @@ jobs:
           bun run build
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+      # Every test lives in noxid-core. Testing the whole workspace would also
+      # build the Tauri app in debug just to run nothing in it; clippy above
+      # already checks it.
       - name: test
-        run: cargo test --workspace
+        run: cargo test -p noxid-core
+        env:
+          # Enough for backtraces with file and line, at a fraction of full
+          # debug info's link time and cache size.
+          CARGO_PROFILE_DEV_DEBUG: line-tables-only
+          CARGO_PROFILE_TEST_DEBUG: line-tables-only
 
+  # Not waiting for the tests: only the release needs both, and building
+  # alongside them saves the whole length of the test job.
   bundle:
     name: bundle ${{ matrix.name }}
-    needs: test
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -65,7 +75,8 @@ jobs:
             bundles: deb,appimage
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - name: rust
+        run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
@@ -133,7 +144,7 @@ jobs:
 
   release:
     name: release
-    needs: bundle
+    needs: [test, bundle]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
