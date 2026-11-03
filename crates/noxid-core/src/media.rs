@@ -409,6 +409,14 @@ pub enum Screen {
 }
 
 impl Screen {
+    /// The window whose sound alone goes with this share, if it is a window.
+    pub fn window(&self) -> Option<&str> {
+        match self {
+            Screen::Display(display) if display.kind == Kind::Window => Some(&display.id),
+            _ => None,
+        }
+    }
+
     fn size(&self) -> Size {
         match self {
             Screen::Display(display) => display.size,

@@ -13,10 +13,6 @@
   let loading = $state(true);
   let error = $state<string | null>(null);
 
-  // Windows can leave Noxid's own output out of the capture; a Linux sound
-  // server monitor cannot, so the call's voices go out with the share there.
-  const exactExclusion = navigator.userAgent.includes("Windows");
-
   // `""` in a select stands for the system default.
   const DEFAULT = "";
 
@@ -152,8 +148,11 @@
       <span>
         Share the PC's sound with my screen
         <small>
-          {#if exactExclusion}
-            Everything your computer plays goes out with the share, except Noxid itself.
+          <!-- Windows can capture one app alone and leave Noxid out; a Linux
+               sound server's monitor cannot, so the call's voices go out too. -->
+          {#if snapshot.window_audio_supported}
+            A whole screen sends everything your computer plays, except Noxid. One window sends only
+            that app's sound.
           {:else}
             Everything your computer plays goes out with the share, including this call's voices, so
             others may hear themselves. Use headphones while sharing sound.

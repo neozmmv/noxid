@@ -1,6 +1,8 @@
-//! Windows: everything the PC plays except Noxid itself, through WASAPI
-//! process loopback (`PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE` on our
-//! own process id). Needs Windows 10 version 2004 or later.
+//! Windows: the PC's sound through WASAPI process loopback. Either everything
+//! the PC plays except Noxid itself (`EXCLUDE_TARGET_PROCESS_TREE` on our own
+//! process id), or only what one application plays (`INCLUDE_TARGET_PROCESS_TREE`
+//! on the process that owns a shared window). Needs Windows 10 version 2004 or
+//! later.
 //!
 //! The flow follows Microsoft's ApplicationLoopback sample: activate a virtual
 //! audio device asynchronously, initialise it as an event-driven loopback
@@ -17,9 +19,10 @@ use windows::Win32::Media::Audio::{
     AUDCLNT_STREAMFLAGS_EVENTCALLBACK, AUDCLNT_STREAMFLAGS_LOOPBACK,
     AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY, AUDIOCLIENT_ACTIVATION_PARAMS,
     AUDIOCLIENT_ACTIVATION_PARAMS_0, AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
-    AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS, ActivateAudioInterfaceAsync, IActivateAudioInterfaceAsyncOperation,
+    AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS, ActivateAudioInterfaceAsync, PROCESS_LOOPBACK_MODE, IActivateAudioInterfaceAsyncOperation,
     IActivateAudioInterfaceCompletionHandler, IActivateAudioInterfaceCompletionHandler_Impl,
     IAudioCaptureClient, IAudioClient, PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE,
+    PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE,
     VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, WAVEFORMATEX,
 };
 use windows::Win32::Media::Multimedia::WAVE_FORMAT_IEEE_FLOAT;
@@ -44,6 +47,27 @@ const POLL: Duration = Duration::from_millis(10);
 /// with silence.
 const SILENCE_AFTER: Duration = Duration::from_millis(20);
 
+/// Whose sound is captured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Target {
+    /// Everything the PC plays, except Noxid and its children.
+    AllButUs,
+    /// Only what this process and its children play.
+    Process(u32),
+}
+
+impl Target {
+    fn params(self) -> (u32, PROCESS_LOOPBACK_MODE) {
+        match self {
+            Target::AllButUs => (
+                unsafe { GetCurrentProcessId() },
+                PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE,
+            ),
+            Target::Process(pid) => (pid, PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE),
+        }
+    }
+}
+
 #[implement(IActivateAudioInterfaceCompletionHandler)]
 struct Activated(std_mpsc::SyncSender<()>);
 
@@ -60,14 +84,14 @@ impl IActivateAudioInterfaceCompletionHandler_Impl for Activated_Impl {
 /// Starts capturing on a thread of its own. Returns once audio is flowing, or
 /// with the reason it could not start. The thread stops when `tx`'s receiver
 /// is dropped.
-pub(super) fn start(tx: mpsc::Sender<Vec<f32>>) -> Result<()> {
+pub(super) fn start(tx: mpsc::Sender<Vec<f32>>, target: Target) -> Result<()> {
     let (ready_tx, ready_rx) = std_mpsc::sync_channel::<Result<()>>(1);
     std::thread::Builder::new()
         .name("noxid-loopback".into())
         .spawn(move || {
             // SAFETY: COM is initialised for this thread inside `run`, and every
             // interface it touches is created and released on this thread.
-            if let Err(e) = unsafe { run(&tx, &ready_tx) } {
+            if let Err(e) = unsafe { run(&tx, &ready_tx, target) } {
                 // Reaches the caller if it is still waiting; otherwise the
                 // stream simply ends.
                 tracing::warn!("PC sound capture stopped: {e:#}");
@@ -88,14 +112,15 @@ struct Activation {
     _handler: IActivateAudioInterfaceCompletionHandler,
 }
 
-/// Activates the process-loopback virtual device for everything except us.
-unsafe fn activate() -> Result<(IAudioClient, Activation)> {
+/// Activates the process-loopback virtual device for `target`.
+unsafe fn activate(target: Target) -> Result<(IAudioClient, Activation)> {
+    let (process, mode) = target.params();
     let mut params = AUDIOCLIENT_ACTIVATION_PARAMS {
         ActivationType: AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
         Anonymous: AUDIOCLIENT_ACTIVATION_PARAMS_0 {
             ProcessLoopbackParams: AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS {
-                TargetProcessId: unsafe { GetCurrentProcessId() },
-                ProcessLoopbackMode: PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE,
+                TargetProcessId: process,
+                ProcessLoopbackMode: mode,
             },
         },
     };
@@ -151,15 +176,23 @@ unsafe fn activate() -> Result<(IAudioClient, Activation)> {
     ))
 }
 
-unsafe fn run(tx: &mpsc::Sender<Vec<f32>>, ready: &std_mpsc::SyncSender<Result<()>>) -> Result<()> {
+unsafe fn run(
+    tx: &mpsc::Sender<Vec<f32>>,
+    ready: &std_mpsc::SyncSender<Result<()>>,
+    target: Target,
+) -> Result<()> {
     unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).ok()? };
-    let result = unsafe { capture(tx, ready) };
+    let result = unsafe { capture(tx, ready, target) };
     unsafe { CoUninitialize() };
     result
 }
 
-unsafe fn capture(tx: &mpsc::Sender<Vec<f32>>, ready: &std_mpsc::SyncSender<Result<()>>) -> Result<()> {
-    let (client, _activation) = unsafe { activate()? };
+unsafe fn capture(
+    tx: &mpsc::Sender<Vec<f32>>,
+    ready: &std_mpsc::SyncSender<Result<()>>,
+    target: Target,
+) -> Result<()> {
+    let (client, _activation) = unsafe { activate(target)? };
 
     let block_align = (CHANNELS * 4) as u16;
     let format = WAVEFORMATEX {
@@ -253,4 +286,83 @@ unsafe fn pump(
             }
         }
     }
+}
+
+/// The process that plays a window's sound, from a window id as the share
+/// picker lists it (`window:<handle>` or the bare handle).
+///
+/// Store apps are the exception to "the window's owner": their frame belongs
+/// to `ApplicationFrameHost.exe`, and the app itself owns a child window
+/// inside it. That child's process is the one to capture.
+pub(super) fn window_process(id: &str) -> Result<u32> {
+    use windows::Win32::Foundation::{HWND, LPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{EnumChildWindows, GetWindowThreadProcessId, IsWindow};
+    use windows_core::BOOL;
+
+    let handle: usize = id
+        .strip_prefix("window:")
+        .unwrap_or(id)
+        .parse()
+        .map_err(|_| anyhow!("bad window id {id:?}"))?;
+    let hwnd = HWND(handle as *mut _);
+    if !unsafe { IsWindow(Some(hwnd)) }.as_bool() {
+        anyhow::bail!("that window is gone");
+    }
+    let owner = |hwnd: HWND| {
+        let mut pid = 0u32;
+        unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+        pid
+    };
+    let frame = owner(hwnd);
+    if frame == 0 {
+        anyhow::bail!("the window's process could not be found");
+    }
+    if !is_frame_host(frame) {
+        return Ok(frame);
+    }
+
+    struct Search {
+        frame: u32,
+        app: u32,
+    }
+    unsafe extern "system" fn visit(child: HWND, state: LPARAM) -> BOOL {
+        // SAFETY: `state` is the `Search` below, alive for the whole enumeration.
+        let search = unsafe { &mut *(state.0 as *mut Search) };
+        let mut pid = 0u32;
+        unsafe { GetWindowThreadProcessId(child, Some(&mut pid)) };
+        if pid != 0 && pid != search.frame {
+            search.app = pid;
+            return false.into();
+        }
+        true.into()
+    }
+    let mut search = Search { frame, app: 0 };
+    unsafe {
+        let _ = EnumChildWindows(Some(hwnd), Some(visit), LPARAM(&mut search as *mut _ as isize));
+    }
+    Ok(if search.app != 0 { search.app } else { frame })
+}
+
+/// Whether `pid` is the host that frames Store apps' windows.
+fn is_frame_host(pid: u32) -> bool {
+    use windows::Win32::System::Threading::{
+        OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+    };
+    use windows_core::PWSTR;
+
+    let Ok(process) = (unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }) else {
+        return false;
+    };
+    let mut buffer = [0u16; 1024];
+    let mut len = buffer.len() as u32;
+    let named = unsafe {
+        QueryFullProcessImageNameW(process, PROCESS_NAME_WIN32, PWSTR(buffer.as_mut_ptr()), &mut len)
+    };
+    unsafe {
+        let _ = CloseHandle(process);
+    }
+    named.is_ok()
+        && String::from_utf16_lossy(&buffer[..len as usize])
+            .to_lowercase()
+            .ends_with("\\applicationframehost.exe")
 }

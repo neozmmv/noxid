@@ -217,6 +217,7 @@
           quality={qualityChoice(focused)}
           onquality={(value) => chooseQuality(focused.id, value)}
           sendingSound={snapshot.screen_audio}
+          windowSound={snapshot.sharing_window && snapshot.window_audio_supported}
           onmenu={(e) => openScreenMenu(focused.id, e)}
         />
         {#if others.length}

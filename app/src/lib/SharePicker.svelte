@@ -113,7 +113,13 @@
     {#if windows.length}
       <section aria-label="Windows">
         <h3>One window</h3>
-        <p>Only that window is sent, even when other windows cover it.</p>
+        <p>
+          {#if snapshot.screen_audio && snapshot.window_audio_supported}
+            Only that window and its app's sound are sent, even when other windows cover it.
+          {:else}
+            Only that window is sent, even when other windows cover it.
+          {/if}
+        </p>
         <div class="grid">
           {#each windows as t (t.id)}
             {@render card(t, t.name, t.app)}

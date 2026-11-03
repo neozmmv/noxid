@@ -4,11 +4,17 @@
 //! other participants' voices, and capturing those back into a share would
 //! send everyone their own voice a moment late.
 //!
-//! - Windows: WASAPI process loopback with Noxid's process tree excluded
-//!   (Windows 10 2004 and later), so the exclusion is exact.
-//! - Linux: the sound server's monitor of the default output. It cannot leave
-//!   one application out, so participants' voices are in it too; the share
-//!   says so in the UI. A proper fix needs a PipeWire filter graph.
+//! A shared window carries only its own application's sound, not the rest of
+//! the PC: someone showing a video should not also be sending their music
+//! player and notification chimes.
+//!
+//! - Windows: WASAPI process loopback (Windows 10 2004 and later). A display
+//!   share captures everything with Noxid's process tree excluded; a window
+//!   share captures only the window's process tree. Both are exact.
+//! - Linux: the sound server's monitor of the default output, for displays and
+//!   windows alike. It cannot leave one application out or pick one, so
+//!   participants' voices are in it too; the share says so in the UI. A proper
+//!   fix needs a PipeWire filter graph.
 //! - macOS is not a target yet.
 
 use std::time::Duration;
@@ -27,14 +33,25 @@ pub fn system_audio_supported() -> bool {
     cfg!(any(windows, target_os = "linux"))
 }
 
+/// Whether a shared window's sound can be captured on its own, without the
+/// rest of the PC.
+pub fn window_audio_supported() -> bool {
+    cfg!(windows)
+}
+
 /// Starts capturing the PC's sound. Capture stops by itself once the returned
 /// source (and the publisher holding it) is dropped.
 pub struct SystemAudio;
 
 impl SystemAudio {
-    pub fn start(now: impl Fn() -> Duration + Send + Sync + 'static) -> Result<AudioSource> {
+    /// `window` is a shared window's id, whose application's sound alone is
+    /// captured where the platform allows; `None` is the whole PC.
+    pub fn start(
+        window: Option<&str>,
+        now: impl Fn() -> Duration + Send + Sync + 'static,
+    ) -> Result<AudioSource> {
         let (tx, rx) = mpsc::channel(QUEUE);
-        let (sample_rate, channels) = platform::start(tx)?;
+        let (sample_rate, channels) = platform::start(tx, window)?;
         Ok(super::pcm_source(rx, sample_rate, channels, now))
     }
 }
@@ -43,9 +60,15 @@ impl SystemAudio {
 mod platform {
     use super::*;
 
-    pub(super) fn start(tx: mpsc::Sender<Vec<f32>>) -> Result<(u32, u32)> {
-        super::super::loopback::start(tx)?;
-        Ok((super::super::loopback::SAMPLE_RATE, super::super::loopback::CHANNELS))
+    use super::super::loopback::{self, Target};
+
+    pub(super) fn start(tx: mpsc::Sender<Vec<f32>>, window: Option<&str>) -> Result<(u32, u32)> {
+        let target = match window {
+            Some(id) => Target::Process(loopback::window_process(id)?),
+            None => Target::AllButUs,
+        };
+        loopback::start(tx, target)?;
+        Ok((loopback::SAMPLE_RATE, loopback::CHANNELS))
     }
 }
 
@@ -55,7 +78,8 @@ mod platform {
     use anyhow::Context;
     use cpal::traits::{DeviceTrait, HostTrait};
 
-    pub(super) fn start(tx: mpsc::Sender<Vec<f32>>) -> Result<(u32, u32)> {
+    pub(super) fn start(tx: mpsc::Sender<Vec<f32>>, _window: Option<&str>) -> Result<(u32, u32)> {
+        // One application cannot be singled out here; see the module docs.
         // PulseAudio and PipeWire's Pulse layer list a "Monitor of <output>"
         // source for every output; the default output's comes first when the
         // server lists the default sink first, which both do.
@@ -86,7 +110,7 @@ mod platform {
 mod platform {
     use super::*;
 
-    pub(super) fn start(_tx: mpsc::Sender<Vec<f32>>) -> Result<(u32, u32)> {
+    pub(super) fn start(_tx: mpsc::Sender<Vec<f32>>, _window: Option<&str>) -> Result<(u32, u32)> {
         anyhow::bail!("sharing the PC's sound is not supported on this platform yet")
     }
 }

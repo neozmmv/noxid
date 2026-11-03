@@ -118,6 +118,11 @@ pub struct Snapshot {
     /// Whether a share includes the PC's sound.
     pub screen_audio: bool,
     pub screen_audio_supported: bool,
+    /// Whether sharing one window sends that window's sound alone, rather
+    /// than everything the PC plays.
+    pub window_audio_supported: bool,
+    /// Whether the share in progress is of one window.
+    pub sharing_window: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -568,7 +573,19 @@ impl Node {
     pub fn share_screen(&self, screen: Option<Screen>) -> Result<()> {
         let mut local = self.inner.local.lock().unwrap();
         let switching = screen.is_some() && local.screen_broadcast.is_some();
+        // A window's share carries that window's sound alone, so moving to
+        // another window (or to or from a display) moves the sound too.
+        let sound_moves = switching
+            && local.screen.as_ref().and_then(Screen::window)
+                != screen.as_ref().and_then(Screen::window);
         local.screen = screen;
+        if sound_moves
+            && local.screen_audio
+            && let Some(broadcast) = &local.screen_broadcast
+        {
+            self.inner
+                .apply_screen_audio(broadcast, true, local.screen.as_ref());
+        }
         drop(local);
         if switching {
             return self.inner.restart_share();
@@ -590,7 +607,8 @@ impl Node {
         let mut local = self.inner.local.lock().unwrap();
         local.screen_audio = on && audio::system_audio_supported();
         if let Some(broadcast) = &local.screen_broadcast {
-            self.inner.apply_screen_audio(broadcast, local.screen_audio);
+            self.inner
+                .apply_screen_audio(broadcast, local.screen_audio, local.screen.as_ref());
         }
         drop(local);
         self.inner.bump();
@@ -830,20 +848,22 @@ impl Inner {
             .map_err(|e| anyhow::anyhow!("{e:#}"))?;
         let send = *self.send.lock().unwrap();
         media::share_screen(&broadcast, &screen, send)?;
-        self.apply_screen_audio(&broadcast, local.screen_audio);
+        self.apply_screen_audio(&broadcast, local.screen_audio, Some(&screen));
         local.screen_broadcast = Some(broadcast);
         Ok(())
     }
 
-    /// Adds or removes the PC's sound on a share. A failure costs the sound,
-    /// never the picture, and is reported once.
-    fn apply_screen_audio(&self, broadcast: &LocalBroadcast, on: bool) {
+    /// Adds or removes the PC's sound on a share: only the window's own
+    /// sound when `screen` is a window, the whole PC's otherwise. A failure
+    /// costs the sound, never the picture, and is reported once.
+    fn apply_screen_audio(&self, broadcast: &LocalBroadcast, on: bool, screen: Option<&Screen>) {
         if !on {
             broadcast.audio().clear();
             return;
         }
         let clock = *broadcast.clock();
-        match SystemAudio::start(move || clock.now().into()) {
+        let window = screen.and_then(Screen::window);
+        match SystemAudio::start(window, move || clock.now().into()) {
             Ok(source) => broadcast.audio().set(source),
             Err(e) => {
                 warn!("sharing without sound: {e:#}");
@@ -949,6 +969,8 @@ impl Inner {
             output_device: local.output_device.clone(),
             screen_audio: local.screen_audio,
             screen_audio_supported: audio::system_audio_supported(),
+            window_audio_supported: audio::window_audio_supported(),
+            sharing_window: local.screen.as_ref().and_then(Screen::window).is_some(),
         }
     }
 

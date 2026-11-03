@@ -12,11 +12,13 @@
     onquality: (value: string) => void;
     /** For our own share: whether the PC's sound goes out with it. */
     sendingSound: boolean;
+    /** For our own share: whether that sound is one window's alone. */
+    windowSound: boolean;
     /** Right-click on the picture. */
     onmenu: (event: MouseEvent) => void;
   }
 
-  let { member, quality, onquality, sendingSound, onmenu }: Props = $props();
+  let { member, quality, onquality, sendingSound, windowSound, onmenu }: Props = $props();
 
   const fullscreen = $derived(view.fullscreen);
   // In fullscreen the controls get out of the way until the pointer moves.
@@ -83,7 +85,13 @@
 
     {#if member.is_self}
       <span class="meta">
-        {sendingSound ? "Sending your PC's sound. You hear it from your PC, not from here." : "Without sound"}
+        {#if !sendingSound}
+          Not sending sound
+        {:else if windowSound}
+          Sending this window's sound. You hear it from your PC, not from here.
+        {:else}
+          Sending your PC's sound. You hear it from your PC, not from here.
+        {/if}
       </span>
     {:else}
       <span class="meta">

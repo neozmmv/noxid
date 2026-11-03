@@ -1,5 +1,8 @@
 //! Captures the PC's sound for a few seconds and reports how much arrived.
 //! A hardware check for the share-with-sound path, outside any call.
+//!
+//! Pass a window id (`window:<handle>`) to capture only that window's
+//! application.
 
 use std::time::{Duration, Instant};
 
@@ -11,7 +14,8 @@ use iroh_live::media::publish::AudioSource;
 async fn main() -> anyhow::Result<()> {
     noxid_core::log::init(None);
     let start = Instant::now();
-    let source = SystemAudio::start(move || start.elapsed())?;
+    let window = std::env::args().nth(1);
+    let source = SystemAudio::start(window.as_deref(), move || start.elapsed())?;
     let AudioSource::Frames { input, mut frames } = source else {
         anyhow::bail!("expected PCM frames");
     };

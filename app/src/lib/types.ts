@@ -64,6 +64,10 @@ export interface Snapshot {
   output_device: string | null;
   screen_audio: boolean;
   screen_audio_supported: boolean;
+  /** Whether a window share sends that window's sound alone (Windows only). */
+  window_audio_supported: boolean;
+  /** Whether the share in progress is of one window. */
+  sharing_window: boolean;
 }
 
 export interface AudioDevice {
