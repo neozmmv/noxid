@@ -1,7 +1,12 @@
 <script lang="ts">
+  import Maximize from "@lucide/svelte/icons/maximize";
+  import Minimize from "@lucide/svelte/icons/minimize";
+  import Volume2 from "@lucide/svelte/icons/volume-2";
+  import VolumeX from "@lucide/svelte/icons/volume-x";
   import { api } from "./api";
   import { setFullscreen as goFullscreen, view } from "./fullscreen.svelte";
   import ScreenView from "./ScreenView.svelte";
+  import Select from "./Select.svelte";
   import type { MemberView, Quality } from "./types";
 
   // The shared screen on the big stage, with its own controls: fullscreen, the
@@ -138,12 +143,12 @@
 
       <label ondblclick={(e) => e.stopPropagation()}>
         <span class="visually-hidden">Picture quality</span>
-        <select class="field compact" value={quality} onchange={(e) => onquality(e.currentTarget.value)}>
+        <Select compact value={quality} onchange={(e) => onquality(e.currentTarget.value)}>
           <option value="auto">Quality: automatic</option>
           <option value="high">Quality: high</option>
           <option value="mid">Quality: medium</option>
           <option value="low">Quality: low</option>
-        </select>
+        </Select>
       </label>
     {/if}
 
@@ -154,13 +159,11 @@
       onclick={() => setFullscreen(!fullscreen)}
       ondblclick={(e) => e.stopPropagation()}
     >
-      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-        {#if fullscreen}
-          <path fill="currentColor" d="M8 3v3a2 2 0 0 1-2 2H3v2h3a4 4 0 0 0 4-4V3H8Zm8 0h-2v3a4 4 0 0 0 4 4h3V8h-3a2 2 0 0 1-2-2V3ZM3 16h3a2 2 0 0 1 2 2v3h2v-3a4 4 0 0 0-4-4H3v2Zm15-2a4 4 0 0 0-4 4v3h2v-3a2 2 0 0 1 2-2h3v-2h-3Z" />
-        {:else}
-          <path fill="currentColor" d="M3 3h6v2H5v4H3V3Zm12 0h6v6h-2V5h-4V3ZM3 15h2v4h4v2H3v-6Zm16 0h2v6h-6v-2h4v-4Z" />
-        {/if}
-      </svg>
+      {#if fullscreen}
+        <Minimize size={20} aria-hidden="true" />
+      {:else}
+        <Maximize size={20} aria-hidden="true" />
+      {/if}
     </button>
   </div>
 </section>
@@ -230,12 +233,6 @@
     min-width: 3.2em;
     color: var(--mist);
     font-variant-numeric: tabular-nums;
-  }
-
-  .compact {
-    width: auto;
-    padding: 0.5rem 2.4rem 0.5rem 0.9rem;
-    border-radius: 999px;
   }
 
   /* Fullscreen: the picture takes everything, the bar floats over its foot. */

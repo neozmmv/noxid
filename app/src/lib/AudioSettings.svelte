@@ -2,6 +2,7 @@
   import { onMount, untrack } from "svelte";
   import { api } from "./api";
   import { METER_FLOOR_DB, prefs, setSensitivity, toDb, voice } from "./levels.svelte";
+  import Select from "./Select.svelte";
   import type { AudioDevice, Snapshot } from "./types";
 
   // Which microphone we talk into, where everyone else is heard, and whether
@@ -82,8 +83,7 @@
 
   <label>
     <span>Microphone</span>
-    <select
-      class="field"
+    <Select
       disabled={loading}
       value={snapshot.mic_device ?? DEFAULT}
       onchange={(e) => pick("input", e.currentTarget.value)}
@@ -92,13 +92,12 @@
       {#each inputs as d (d.id)}
         <option value={d.id}>{d.name}</option>
       {/each}
-    </select>
+    </Select>
   </label>
 
   <label>
     <span>Speakers or headphones</span>
-    <select
-      class="field"
+    <Select
       disabled={loading}
       value={snapshot.output_device ?? DEFAULT}
       onchange={(e) => pick("output", e.currentTarget.value)}
@@ -107,7 +106,7 @@
       {#each outputs as d (d.id)}
         <option value={d.id}>{d.name}</option>
       {/each}
-    </select>
+    </Select>
   </label>
 
   <div class="sensitivity">
@@ -209,7 +208,8 @@
     color: var(--mist);
   }
 
-  select.field {
+  .settings :global(select.field) {
+    width: 100%;
     background-color: var(--ink);
   }
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import MicOff from "@lucide/svelte/icons/mic-off";
   import { REMOTE_THRESHOLD, fromDb, prefs, voice } from "./levels.svelte";
   import type { MemberView } from "./types";
 
@@ -91,12 +92,7 @@
     {initials}
     {#if micOff || mutedByMe}
       <span class="badge" class:mine={mutedByMe && !micOff} aria-hidden="true">
-        <svg viewBox="0 0 24 24" width="14" height="14">
-          <path
-            fill="currentColor"
-            d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-8.58 3.5l-1.42 1.42A7 7 0 0 0 11 17.93V21h2v-3.07A7 7 0 0 0 19 11h-2ZM3.7 2.3 2.3 3.7l18 18 1.4-1.4-18-18Z"
-          />
-        </svg>
+        <MicOff size={small ? 11 : 14} strokeWidth={2.5} />
       </span>
     {/if}
   </span>
@@ -202,11 +198,6 @@
     right: -3px;
     bottom: -3px;
     border-width: 2px;
-  }
-
-  .small .badge svg {
-    width: 11px;
-    height: 11px;
   }
 
   .name {

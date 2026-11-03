@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api } from "./api";
+  import Select from "./Select.svelte";
   import type { DisplayInfo, Quality, Snapshot } from "./types";
 
   // Choosing what to share: a whole screen, or one window, each shown as a
@@ -132,8 +133,8 @@
   <div class="actions">
     <label class="bitrate">
       <span>Bitrate</span>
-      <select
-        class="field compact"
+      <Select
+        compact
         value={snapshot.bitrate === null ? "auto" : String(snapshot.bitrate / 1000)}
         onchange={(e) => {
           const v = e.currentTarget.value;
@@ -144,7 +145,7 @@
         {#each bitrateChoices as choice (choice)}
           <option value={String(choice)}>{kbps(choice * 1000)}</option>
         {/each}
-      </select>
+      </Select>
     </label>
     <button class="button quiet" onclick={onclose}>Cancel</button>
   </div>
@@ -276,10 +277,7 @@
     color: var(--mist);
   }
 
-  .compact {
-    width: auto;
-    padding: 0.5rem 2.4rem 0.5rem 0.9rem;
-    border-radius: 999px;
+  .bitrate :global(select.field) {
     background-color: var(--ink);
   }
 </style>

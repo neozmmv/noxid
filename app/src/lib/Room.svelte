@@ -1,11 +1,18 @@
 <script lang="ts">
   import { api } from "./api";
   import type { DisplayInfo, MemberView, Quality, QualityMode, Snapshot } from "./types";
+  import ChevronDown from "@lucide/svelte/icons/chevron-down";
+  import Headphones from "@lucide/svelte/icons/headphones";
+  import HeadphoneOff from "@lucide/svelte/icons/headphone-off";
+  import Mic from "@lucide/svelte/icons/mic";
+  import MicOff from "@lucide/svelte/icons/mic-off";
   import AudioSettings from "./AudioSettings.svelte";
+  import Confirm from "./Confirm.svelte";
   import Orb from "./Orb.svelte";
   import PeerMenu from "./PeerMenu.svelte";
   import ScreenMenu from "./ScreenMenu.svelte";
   import ScreenView from "./ScreenView.svelte";
+  import Select from "./Select.svelte";
   import SharePicker from "./SharePicker.svelte";
   import Stage from "./Stage.svelte";
 
@@ -150,12 +157,13 @@
 
   let confirmingLeave = $state(false);
 
-  async function leave() {
-    if (room.is_coordinator && members.length > 1 && !confirmingLeave) {
+  // The host leaving ends the room for everyone else, so that is asked first.
+  function leave() {
+    if (room.is_coordinator && members.length > 1) {
       confirmingLeave = true;
       return;
     }
-    await api.leaveRoom();
+    api.leaveRoom();
   }
 </script>
 
@@ -166,9 +174,7 @@
     {#if room.is_coordinator}
       <button class="button quiet" onclick={() => (showInvite = !showInvite)} aria-expanded={showInvite}>
         Invite people
-        <svg class="chevron" class:open={showInvite} viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-          <path fill="currentColor" d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6 1.4-1.4Z" />
-        </svg>
+        <ChevronDown class={["chevron", showInvite && "open"]} size={18} aria-hidden="true" />
       </button>
     {/if}
   </header>
@@ -271,19 +277,11 @@
       title={snapshot.mic_on ? "Turn mic off" : "Turn mic on"}
       onclick={() => api.setMic(!snapshot.mic_on)}
     >
-      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-        {#if snapshot.mic_on}
-          <path
-            fill="currentColor"
-            d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.93V21h2v-3.07A7 7 0 0 0 19 11h-2Z"
-          />
-        {:else}
-          <path
-            fill="currentColor"
-            d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-8.58 3.5l-1.42 1.42A7 7 0 0 0 11 17.93V21h2v-3.07A7 7 0 0 0 19 11h-2ZM3.7 2.3 2.3 3.7l18 18 1.4-1.4-18-18Z"
-          />
-        {/if}
-      </svg>
+      {#if snapshot.mic_on}
+        <Mic size={22} aria-hidden="true" />
+      {:else}
+        <MicOff size={22} aria-hidden="true" />
+      {/if}
     </button>
     <button
       class="mic"
@@ -293,19 +291,11 @@
       title={snapshot.deafened ? "Undeafen" : "Deafen (hear nobody)"}
       onclick={() => api.setDeafened(!snapshot.deafened)}
     >
-      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-        {#if snapshot.deafened}
-          <path
-            fill="currentColor"
-            d="M12 3a9 9 0 0 0-9 9v7a2 2 0 0 0 2 2h3v-8H5v-1a7 7 0 0 1 11.6-5.27l1.42-1.42A8.96 8.96 0 0 0 12 3Zm7 5.83-1.65 1.65c.42.9.65 1.79.65 2.52v1h-3v8h3a2 2 0 0 0 2-2v-7c0-1.47-.36-2.86-1-4.17ZM3.7 2.3 2.3 3.7l18 18 1.4-1.4-18-18Z"
-          />
-        {:else}
-          <path
-            fill="currentColor"
-            d="M12 3a9 9 0 0 0-9 9v7a2 2 0 0 0 2 2h3v-8H5v-1a7 7 0 0 1 14 0v1h-3v8h3a2 2 0 0 0 2-2v-7a9 9 0 0 0-9-9Z"
-          />
-        {/if}
-      </svg>
+      {#if snapshot.deafened}
+        <HeadphoneOff size={22} aria-hidden="true" />
+      {:else}
+        <Headphones size={22} aria-hidden="true" />
+      {/if}
     </button>
     <button class="button" aria-pressed={snapshot.sharing} onclick={toggleShare}>
       {snapshot.sharing ? "Stop sharing" : "Share screen"}
@@ -315,34 +305,30 @@
     {/if}
     <label>
       <span class="visually-hidden">Highest quality you send</span>
-      <select
-        class="field compact"
+      <Select
+        compact
         value={snapshot.max_quality}
         onchange={(e) => api.setMaxQuality(e.currentTarget.value as Quality)}
       >
         <option value="high">Send up to 1080p</option>
         <option value="mid">Send up to 720p</option>
         <option value="low">Send up to 360p</option>
-      </select>
+      </Select>
     </label>
     <label>
       <span class="visually-hidden">Pictures per second you send</span>
-      <select
-        class="field compact"
+      <Select
+        compact
         value={snapshot.framerate}
         onchange={(e) => api.setFramerate(Number(e.currentTarget.value))}
       >
         <option value={24}>24 fps</option>
         <option value={30}>30 fps</option>
         <option value={60}>60 fps</option>
-      </select>
+      </Select>
     </label>
     <button class="button quiet" onclick={() => (showAudio = true)}>Audio</button>
     <span class="spacer"></span>
-    {#if confirmingLeave}
-      <span class="confirm">Leaving ends the room for everyone.</span>
-      <button class="button quiet" onclick={() => (confirmingLeave = false)}>Stay</button>
-    {/if}
     <button class="button danger" onclick={leave}>
       {room.is_coordinator ? "End room" : "Leave"}
     </button>
@@ -381,6 +367,20 @@
 
 {#if picking}
   <SharePicker {snapshot} targets={picking} onpick={share} onclose={() => (picking = null)} />
+{/if}
+
+{#if confirmingLeave}
+  <Confirm
+    question="Are you sure you want to exit the session?"
+    detail="You are the host, so this ends the room for everyone."
+    confirm="End room"
+    cancel="Stay"
+    onconfirm={() => {
+      confirmingLeave = false;
+      api.leaveRoom();
+    }}
+    oncancel={() => (confirmingLeave = false)}
+  />
 {/if}
 
 {#if showAudio}
@@ -477,12 +477,12 @@
     letter-spacing: -0.015em;
   }
 
-  .chevron {
+  header :global(.chevron) {
     margin-right: -0.3rem;
     transition: transform 150ms ease;
   }
 
-  .chevron.open {
+  header :global(.chevron.open) {
     transform: rotate(180deg);
   }
 
@@ -601,13 +601,4 @@
     flex: 1;
   }
 
-  .confirm {
-    color: var(--mist);
-  }
-
-  .compact {
-    width: auto;
-    padding: 0.5rem 2.4rem 0.5rem 0.9rem;
-    border-radius: 999px;
-  }
 </style>
