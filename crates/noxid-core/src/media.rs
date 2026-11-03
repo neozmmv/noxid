@@ -341,6 +341,26 @@ pub async fn find_display(spec: Option<&str>) -> Result<Display> {
     })
 }
 
+/// Whether a shared window is still open. A capture of a closed window does
+/// not end, it just stops sending pictures, so viewers would be left on its
+/// last one; the share watches for this instead.
+///
+/// Minimized windows count as open. Where windows cannot be listed, a window
+/// is taken to be open, so a share is never ended on a guess.
+pub async fn window_exists(id: &str) -> bool {
+    #[cfg(windows)]
+    {
+        crate::still::window_exists(id)
+    }
+    #[cfg(not(windows))]
+    {
+        match capture::windows().await {
+            Ok(windows) => windows.iter().any(|w| w.id == id),
+            Err(_) => true,
+        }
+    }
+}
+
 /// The capture source for a display or window.
 fn capture_source(target: &Display) -> capture::Source {
     match target.kind {

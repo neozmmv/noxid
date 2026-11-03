@@ -23,6 +23,14 @@ use windows_core::BOOL;
 
 use crate::media::{Display, Kind, Size};
 
+/// Whether the window with this share id is still open.
+pub(crate) fn window_exists(id: &str) -> bool {
+    let Ok(handle) = id.strip_prefix("window:").unwrap_or(id).parse::<usize>() else {
+        return false;
+    };
+    unsafe { IsWindow(Some(HWND(handle as *mut _))) }.as_bool()
+}
+
 /// A still of `target`, at most `width` pixels wide, as tightly packed RGBA.
 pub(crate) fn grab(target: &Display, width: u32) -> Result<(Size, Vec<u8>)> {
     // Physical pixels throughout, as the capture itself uses: a DPI-unaware

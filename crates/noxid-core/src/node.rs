@@ -606,7 +606,11 @@ impl Node {
         let sound_moves = switching
             && local.screen.as_ref().and_then(Screen::window)
                 != screen.as_ref().and_then(Screen::window);
+        let watch = screen.as_ref().and_then(Screen::window).map(str::to_string);
         local.screen = screen;
+        if let Some(window) = watch {
+            tokio::spawn(watch_window(self.inner.clone(), window));
+        }
         if sound_moves
             && local.screen_audio
             && let Some(broadcast) = &local.screen_broadcast
@@ -802,6 +806,41 @@ async fn join_all<F: std::future::Future<Output = ()> + Send + 'static>(
         set.spawn(f);
     }
     while set.join_next().await.is_some() {}
+}
+
+/// How often a shared window is checked for having been closed.
+const WINDOW_CHECK: Duration = Duration::from_secs(1);
+
+/// Ends the share when the window it shows is closed (see
+/// [`media::window_exists`]). Gives up as soon as the share moves elsewhere.
+async fn watch_window(inner: Arc<Inner>, window: String) {
+    let shared = |inner: &Inner| {
+        inner.local.lock().unwrap().screen.as_ref().and_then(Screen::window) == Some(window.as_str())
+    };
+    loop {
+        tokio::time::sleep(WINDOW_CHECK).await;
+        if !shared(&inner) {
+            return;
+        }
+        if media::window_exists(&window).await {
+            continue;
+        }
+        let mut local = inner.local.lock().unwrap();
+        // Checked again under the lock: the share may have moved meanwhile.
+        if local.screen.as_ref().and_then(Screen::window) != Some(window.as_str()) {
+            return;
+        }
+        local.screen = None;
+        if let Err(e) = inner.apply_screen(&mut local) {
+            warn!("ending the share of a closed window: {e:#}");
+        }
+        drop(local);
+        inner.bump();
+        inner.notice(Notice::Error(
+            "The window you were sharing was closed, so the share ended.".into(),
+        ));
+        return;
+    }
 }
 
 /// Ends a broadcast off the caller's thread: subscribers see a clean close
