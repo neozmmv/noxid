@@ -72,7 +72,9 @@
   }
 
   let dialog: HTMLElement;
-  onMount(() => dialog.querySelector<HTMLElement>("select")?.focus());
+  // The dialog itself takes focus, so keyboard users land inside it without
+  // a ring appearing on the first control before they have pressed a key.
+  onMount(() => dialog.focus());
 </script>
 
 <svelte:window onkeydown={keydown} />
@@ -190,6 +192,7 @@
     border-radius: 16px;
     background: var(--dusk);
     border: 1px solid var(--line);
+    outline: none;
     display: grid;
     gap: 1rem;
   }
@@ -210,7 +213,7 @@
 
   .settings :global(select.field) {
     width: 100%;
-    background-color: var(--ink);
+    background-color: var(--dusk-raised);
   }
 
   .sensitivity {

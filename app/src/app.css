@@ -87,6 +87,17 @@ button {
   background: var(--dusk);
 }
 
+/* Fields count as keyboard-focused even when clicked, so the ring would show
+   on every click; they mark focus with a brighter edge instead. */
+.field {
+  transition: border-color 150ms ease;
+}
+
+.field:focus-visible {
+  outline: none;
+  border-color: var(--mist);
+}
+
 /* Selects get their arrow from Select.svelte. */
 select.field option {
   background: var(--dusk);

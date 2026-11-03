@@ -278,6 +278,6 @@
   }
 
   .bitrate :global(select.field) {
-    background-color: var(--ink);
+    background-color: var(--dusk-raised);
   }
 </style>
