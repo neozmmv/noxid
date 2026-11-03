@@ -1,7 +1,7 @@
 <script lang="ts">
   import { api } from "./api";
   import { tooltip } from "./tooltip";
-  import { setDeafened, setMic } from "./controls";
+  import { play, setDeafened, setMic } from "./controls";
   import type { CameraInfo, DisplayInfo, MemberView, Quality, QualityMode, Snapshot } from "./types";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import Eye from "@lucide/svelte/icons/eye";
@@ -34,6 +34,20 @@
   // Room is only mounted while there is a room.
   const room = $derived(snapshot.room!);
   const members = $derived(room.members);
+
+  // A sound when someone comes in or goes. The roster we arrive to is taken
+  // as it is, and our own leaving unmounts all this, so neither makes one.
+  let present: Set<string> | null = null;
+  $effect(() => {
+    const ids = new Set(members.map((m) => m.id));
+    if (present) {
+      const joined = [...ids].some((id) => !present!.has(id));
+      const left = [...present].some((id) => !ids.has(id));
+      if (joined) play("join");
+      else if (left) play("exit");
+    }
+    present = ids;
+  });
 
   // What each participant sends besides their voice. Our own comes from what
   // we asked for, everyone else's from what arrives.

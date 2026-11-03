@@ -2,12 +2,14 @@
 // button that flips them goes through here, so they all sound the same.
 
 import deafenUrl from "../../audio/deafen.mp3";
+import exitUrl from "../../audio/exit.mp3";
+import joinUrl from "../../audio/join.mp3";
 import muteUrl from "../../audio/mute.mp3";
 import undeafenUrl from "../../audio/undeafen.mp3";
 import unmuteUrl from "../../audio/unmute.mp3";
 import { api } from "./api";
 
-type Cue = "mute" | "unmute" | "deafen" | "undeafen";
+type Cue = "mute" | "unmute" | "deafen" | "undeafen" | "join" | "exit";
 
 // Loaded once up front, so the first click is not silent while a file loads.
 const cues: Record<Cue, HTMLAudioElement> = {
@@ -15,10 +17,12 @@ const cues: Record<Cue, HTMLAudioElement> = {
   unmute: new Audio(unmuteUrl),
   deafen: new Audio(deafenUrl),
   undeafen: new Audio(undeafenUrl),
+  join: new Audio(joinUrl),
+  exit: new Audio(exitUrl),
 };
 for (const audio of Object.values(cues)) audio.preload = "auto";
 
-function play(cue: Cue) {
+export function play(cue: Cue) {
   // Quick toggles stop the sound before this one rather than overlapping it.
   for (const audio of Object.values(cues)) {
     audio.pause();
