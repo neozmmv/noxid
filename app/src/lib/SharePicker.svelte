@@ -156,7 +156,7 @@
     position: fixed;
     inset: 0;
     z-index: 30;
-    background: rgb(10 12 28 / 0.55);
+    background: var(--scrim);
   }
 
   .picker {
@@ -170,7 +170,7 @@
     padding: 1.4rem;
     border-radius: 16px;
     background: var(--dusk);
-    border: 1px solid var(--dusk-raised);
+    border: 1px solid var(--line);
     display: grid;
     grid-template-rows: auto minmax(0, 1fr) auto;
     gap: 1rem;
@@ -213,7 +213,7 @@
     gap: 0.2rem;
     min-width: 0;
     padding: 0.5rem 0.5rem 0.6rem;
-    border: 1px solid var(--dusk-raised);
+    border: 1px solid var(--line);
     border-radius: 12px;
     background: var(--ink);
     text-align: left;
@@ -230,7 +230,7 @@
     margin-bottom: 0.3rem;
     overflow: hidden;
     border-radius: 8px;
-    background: #0d1024;
+    background: var(--dusk);
   }
 
   .still canvas {

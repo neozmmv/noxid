@@ -52,7 +52,7 @@
     padding: 0.5rem;
     border-radius: 12px;
     background: var(--dusk);
-    border: 1px solid var(--dusk-raised);
+    border: 1px solid var(--line);
     box-shadow: 0 12px 32px rgb(0 0 0 / 0.45);
     display: grid;
     gap: 0.15rem;
@@ -129,7 +129,7 @@
   .menu :global(hr) {
     width: 100%;
     border: 0;
-    border-top: 1px solid var(--dusk-raised);
+    border-top: 1px solid var(--line);
     margin: 0.25rem 0;
   }
 </style>

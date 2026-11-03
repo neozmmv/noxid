@@ -147,11 +147,12 @@
     padding: 0.7rem 1rem;
     border-radius: 14px;
     background: var(--dusk);
+    border: 1px solid var(--line);
     border-left: 4px solid var(--lamp);
   }
 
   .transfer.ended {
-    border-left-color: var(--dusk-raised);
+    border-left-color: var(--line);
   }
 
   .transfer.bad {

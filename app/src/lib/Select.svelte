@@ -32,11 +32,11 @@
     appearance: none;
     padding-right: 2.4rem;
   }
-
+  /* SAME RADIUS AS BUTTON IN app.css !! */
   .compact select {
     width: auto;
     padding: 0.5rem 2.2rem 0.5rem 0.9rem;
-    border-radius: 999px;
+    border-radius: 14px; 
   }
 
   .select :global(.arrow) {

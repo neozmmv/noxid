@@ -631,8 +631,8 @@
     grid-template-columns: 1fr 1fr;
     gap: 2rem;
     padding: 1rem 0;
-    border-top: 1px solid var(--dusk-raised);
-    border-bottom: 1px solid var(--dusk-raised);
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
   }
 
   .invite > div {
@@ -662,7 +662,7 @@
   code {
     padding: 0.4rem 0.6rem;
     border-radius: 8px;
-    background: var(--dusk);
+    background: var(--dusk-raised);
     font-family: inherit;
     font-size: var(--step--1);
     overflow-wrap: anywhere;
@@ -675,6 +675,7 @@
     padding: 0.7rem 1rem;
     border-radius: 14px;
     background: var(--dusk);
+    border: 1px solid var(--line);
     border-left: 4px solid var(--lamp);
   }
 
@@ -706,7 +707,7 @@
     align-items: center;
     gap: 0.6rem;
     padding-top: 0.9rem;
-    border-top: 1px solid var(--dusk-raised);
+    border-top: 1px solid var(--line);
   }
 
   .mic {

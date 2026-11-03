@@ -1,14 +1,19 @@
 :root {
   /* Night palette: the app is named for it, so there is no light theme. */
-  --ink: #1b1f3b;
-  --dusk: #262b4f;
-  --dusk-raised: #30365f;
-  --dusk-hover: #3a416f;
+  --ink: #06030e;
+  --dusk: #090423;
+  /* Controls sit on a violet a step up from the night; hairlines a step
+     above that, so a bordered control still shows its edge. */
+  --dusk-raised: #1d1748;
+  --line: #262059;
+  --dusk-hover: #0a177b;
   --moon: #f3f1fa;
-  --mist: #b9bcd6;
+  --mist: #aeaad6;
   --lamp: #f6b94a;
-  --signal: #e5636b;
+  --signal: #dc3641;
   --focus: #9fb4ff;
+  /* Behind dialogs: the night, thickened. */
+  --scrim: rgb(4 2 12 / 0.72);
 
   --font: "Familjen Grotesk Variable", system-ui, sans-serif;
   /* Type scale on a 1.25 ratio from a 15px body. */
@@ -77,7 +82,7 @@ button {
 .field {
   width: 100%;
   padding: 0.65rem 0.8rem;
-  border: 1px solid var(--dusk-raised);
+  border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--dusk);
 }
@@ -100,7 +105,7 @@ select.field option {
   gap: 0.45rem;
   padding: 0.6rem 1.1rem;
   border: 1px solid transparent;
-  border-radius: 999px;
+  border-radius: 14px;
   background: var(--dusk-raised);
   font-weight: 600;
 }
@@ -134,7 +139,7 @@ select.field option {
 
 .button.quiet {
   background: transparent;
-  border-color: var(--dusk-raised);
+  border-color: var(--line);
 }
 
 /* Labels for icon controls, from lib/tooltip.ts. Moonlit, so they read as

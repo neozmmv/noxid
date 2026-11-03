@@ -133,7 +133,7 @@
   }
 
   button.orb:hover .face {
-    background: var(--dusk-raised);
+    background: var(--line);
   }
 
   .face {
@@ -144,7 +144,7 @@
     border-radius: 50%;
     display: grid;
     place-items: center;
-    background: var(--dusk);
+    background: var(--dusk-raised);
     font-size: calc(var(--size) * 0.32);
     font-weight: 650;
     letter-spacing: 0.02em;
@@ -187,7 +187,7 @@
 
   /* Files held over them: the face shows it will take them. */
   .dropping .face {
-    background: var(--dusk-raised);
+    background: var(--line);
     outline: 2px dashed var(--lamp);
     outline-offset: 6px;
   }

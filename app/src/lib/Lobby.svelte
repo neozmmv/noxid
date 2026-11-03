@@ -165,7 +165,7 @@
 
   form + form {
     padding: 0 0 0 2rem;
-    border-left: 1px solid var(--dusk-raised);
+    border-left: 1px solid var(--line);
   }
 
   form .button {
@@ -208,7 +208,7 @@
     form + form {
       padding: 2rem 0 0;
       border-left: 0;
-      border-top: 1px solid var(--dusk-raised);
+      border-top: 1px solid var(--line);
     }
   }
 </style>

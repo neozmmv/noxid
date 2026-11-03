@@ -41,7 +41,7 @@
     position: fixed;
     inset: 0;
     z-index: 30;
-    background: rgb(10 12 28 / 0.55);
+    background: var(--scrim);
   }
 
   .confirm {
@@ -54,7 +54,7 @@
     padding: 1.4rem;
     border-radius: 16px;
     background: var(--dusk);
-    border: 1px solid var(--dusk-raised);
+    border: 1px solid var(--line);
     display: grid;
     gap: 0.6rem;
   }
