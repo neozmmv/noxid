@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use iroh::{Endpoint, EndpointId, SecretKey, endpoint::presets, protocol::Router};
@@ -224,6 +224,9 @@ struct Local {
     mic_device: Option<String>,
     output_device: Option<String>,
     screen: Option<Screen>,
+    /// Counts the shares started, so a share's watcher can tell it has been
+    /// replaced (see [`watch_share`]).
+    share_generation: u64,
     screen_audio: bool,
     /// The open microphone and the device it was opened on. Open while the
     /// mic is on in a room, or while a mic test is running; it also measures
@@ -319,6 +322,7 @@ impl Node {
                 mic_device: config.mic_device,
                 output_device: config.output_device,
                 screen: None,
+                share_generation: 0,
                 screen_audio: audio::system_audio_supported(),
                 mic: None,
                 mic_published: false,
@@ -665,10 +669,11 @@ impl Node {
         let sound_moves = switching
             && local.screen.as_ref().and_then(Screen::window)
                 != screen.as_ref().and_then(Screen::window);
-        let watch = screen.as_ref().and_then(Screen::window).map(str::to_string);
+        let watch = screen.is_some();
         local.screen = screen;
-        if let Some(window) = watch {
-            tokio::spawn(watch_window(self.inner.clone(), window));
+        local.share_generation += 1;
+        if watch {
+            tokio::spawn(watch_share(self.inner.clone(), local.share_generation));
         }
         if sound_moves
             && local.screen_audio
@@ -867,38 +872,86 @@ async fn join_all<F: std::future::Future<Output = ()> + Send + 'static>(
     while set.join_next().await.is_some() {}
 }
 
-/// How often a shared window is checked for having been closed.
-const WINDOW_CHECK: Duration = Duration::from_secs(1);
+/// How often a share is checked on: for its window having closed, and for its
+/// capture having stopped.
+const SHARE_CHECK: Duration = Duration::from_secs(1);
 
-/// Ends the share when the window it shows is closed (see
-/// [`media::window_exists`]). Gives up as soon as the share moves elsewhere.
-async fn watch_window(inner: Arc<Inner>, window: String) {
-    let shared = |inner: &Inner| {
-        inner.local.lock().unwrap().screen.as_ref().and_then(Screen::window) == Some(window.as_str())
+/// The longest a share waits between restarts of a capture that keeps stopping.
+const RESTART_MAX: Duration = Duration::from_secs(30);
+
+/// Looks after one share until it is replaced or ended.
+///
+/// A shared window that is closed ends the share (see [`media::window_exists`]).
+///
+/// A capture that stops is restarted at the source's new size. That is what a
+/// capture does when what it shows changes size: a game switching resolution
+/// or going fullscreen, a window resized, a display's mode changed. It ends so
+/// it can be reopened at the new size, and nothing below us reopens it, so
+/// without this the share would go on sending sound and no picture.
+async fn watch_share(inner: Arc<Inner>, generation: u64) {
+    let current = |inner: &Inner| {
+        let local = inner.local.lock().unwrap();
+        if local.share_generation != generation {
+            return None;
+        }
+        let stopped = local
+            .screen_broadcast
+            .as_ref()
+            .and_then(LocalBroadcast::preview)
+            .is_some_and(|preview| preview.is_closed());
+        local.screen.clone().map(|screen| (screen, stopped))
     };
+    let mut restarted: Option<Instant> = None;
+    let mut backoff = SHARE_CHECK;
     loop {
-        tokio::time::sleep(WINDOW_CHECK).await;
-        if !shared(&inner) {
+        tokio::time::sleep(SHARE_CHECK).await;
+        let Some((screen, stopped)) = current(&inner) else { return };
+
+        if let Some(window) = screen.window()
+            && !media::window_exists(window).await
+        {
+            let mut local = inner.local.lock().unwrap();
+            // Checked again under the lock: the share may have moved meanwhile.
+            if local.share_generation != generation {
+                return;
+            }
+            local.screen = None;
+            if let Err(e) = inner.apply_screen(&mut local) {
+                warn!("ending the share of a closed window: {e:#}");
+            }
+            drop(local);
+            inner.bump();
+            inner.notice(Notice::Error(
+                "The window you were sharing was closed, so the share ended.".into(),
+            ));
             return;
         }
-        if media::window_exists(&window).await {
+
+        if !stopped || restarted.is_some_and(|at| at.elapsed() < backoff) {
             continue;
         }
+        let screen = media::refreshed(&screen).await;
         let mut local = inner.local.lock().unwrap();
-        // Checked again under the lock: the share may have moved meanwhile.
-        if local.screen.as_ref().and_then(Screen::window) != Some(window.as_str()) {
+        if local.share_generation != generation {
             return;
         }
-        local.screen = None;
-        if let Err(e) = inner.apply_screen(&mut local) {
-            warn!("ending the share of a closed window: {e:#}");
+        if let Some(broadcast) = &local.screen_broadcast {
+            info!(size = %screen.size(), "the shared capture stopped, restarting it");
+            let send = *inner.send.lock().unwrap();
+            if let Err(e) = media::share_screen(broadcast, &screen, send) {
+                warn!("restarting the share: {e:#}");
+            }
         }
+        local.screen = Some(screen);
         drop(local);
         inner.bump();
-        inner.notice(Notice::Error(
-            "The window you were sharing was closed, so the share ended.".into(),
-        ));
-        return;
+        // Restarts close together mean a capture that cannot stay open, so
+        // they spread out; one after a quiet spell is just the next resize.
+        backoff = match restarted {
+            Some(at) if at.elapsed() < RESTART_MAX => (backoff * 2).min(RESTART_MAX),
+            _ => SHARE_CHECK,
+        };
+        restarted = Some(Instant::now());
     }
 }
 

@@ -361,6 +361,30 @@ pub async fn window_exists(id: &str) -> bool {
     }
 }
 
+/// `screen` as it is now. What a share shows can change size while it is
+/// shared (a game switching resolution, a resized window), and the ladder is
+/// cut from its size. Left as it was if it cannot be found.
+pub async fn refreshed(screen: &Screen) -> Screen {
+    match screen {
+        Screen::Display(target) => {
+            let found = match target.kind {
+                Kind::Window => windows().await.into_iter().find(|w| w.id == target.id),
+                Kind::Display => displays()
+                    .await
+                    .ok()
+                    .and_then(|all| all.into_iter().find(|d| d.id == target.id)),
+            };
+            let mut target = target.clone();
+            if let Some(found) = found {
+                target.size = found.size;
+            }
+            Screen::Display(target)
+        }
+        #[cfg(feature = "test-source")]
+        Screen::Test => Screen::Test,
+    }
+}
+
 /// The capture source for a display or window.
 fn capture_source(target: &Display) -> capture::Source {
     match target.kind {
@@ -503,7 +527,8 @@ impl Screen {
         }
     }
 
-    fn size(&self) -> Size {
+    /// The size the share's ladder is cut from.
+    pub fn size(&self) -> Size {
         match self {
             Screen::Display(display) => display.size,
             #[cfg(feature = "test-source")]
