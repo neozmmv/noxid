@@ -3,6 +3,8 @@
 Voice calls and screen sharing for small groups, connecting participants
 directly to each other over [iroh](https://github.com/n0-computer/iroh).
 
+<img src="public/noxid-main.png">
+
 A call is voice first: you can join and only talk. Anyone can share a screen
 mid-call, and everyone else sees it. Media runs on
 [iroh-live](https://github.com/n0-computer/iroh-live) (Media over QUIC), with
@@ -10,6 +12,8 @@ no server in the middle.
 
 Built for up to about six people. Every participant sends to every other one,
 so upload bandwidth is what limits the size of a call.
+
+<img src="public/noxid-call.png">
 
 ## Install
 
