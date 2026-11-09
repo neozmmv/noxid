@@ -260,8 +260,48 @@ pub struct Display {
     pub kind: Kind,
 }
 
+/// The one display offered on Wayland, standing for whichever screen is
+/// picked in the desktop's own dialog.
+///
+/// Wayland lets an app capture the screen only through the desktop portal,
+/// which shows its own picker when the capture starts. XWayland still lists
+/// monitors and windows, but a capture through it sees only other X11 apps,
+/// not the screen, so a share of one never sends a picture.
+const PORTAL: &str = "portal";
+
+/// Whether this is a Wayland session, where only the portal can capture.
+fn wayland() -> bool {
+    cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some()
+}
+
+/// A guess at the size of the screen the portal will capture, which the
+/// ladder is cut from before the capture starts. XWayland's monitors are the
+/// best hint there is; the biggest is the safe one, since the ladder only
+/// steps down from it.
+async fn portal_display() -> Display {
+    let size = capture::displays()
+        .await
+        .ok()
+        .and_then(|all| {
+            all.into_iter()
+                .map(|d| Size::new(d.width, d.height))
+                .max_by_key(|s| u64::from(s.width) * u64::from(s.height))
+        })
+        .unwrap_or(Size::new(1920, 1080));
+    Display {
+        id: PORTAL.to_string(),
+        name: "Choose a screen".to_string(),
+        app: String::new(),
+        size,
+        kind: Kind::Display,
+    }
+}
+
 /// The displays this machine offers, in the order an index selects them.
 pub async fn displays() -> Result<Vec<Display>> {
+    if wayland() {
+        return Ok(vec![portal_display().await]);
+    }
     let displays = capture::displays().await.map_err(|e| anyhow::anyhow!("{e:#}"))?;
     Ok(displays
         .into_iter()
@@ -289,6 +329,9 @@ const MIN_WINDOW: Size = Size {
 /// Windows and X11 only. On Wayland, and anywhere else listing fails, the
 /// list is empty and only whole displays are offered.
 pub async fn windows() -> Vec<Display> {
+    if wayland() {
+        return Vec::new();
+    }
     let own = std::env::current_exe()
         .ok()
         .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().to_lowercase()))
@@ -388,6 +431,8 @@ pub async fn refreshed(screen: &Screen) -> Screen {
 /// The capture source for a display or window.
 fn capture_source(target: &Display) -> capture::Source {
     match target.kind {
+        // No id: on Wayland that is what opens the portal's picker.
+        Kind::Display if target.id == PORTAL => capture::Source::Display(None),
         Kind::Display => capture::Source::Display(Some(target.id.clone())),
         Kind::Window => capture::Source::Window(target.id.clone()),
     }
@@ -408,6 +453,8 @@ const CAMERA_SETTLE: Duration = Duration::from_millis(700);
 /// session flashes no yellow border. Elsewhere it opens a capture just for
 /// the one picture and closes it again.
 pub async fn preview(id: &str, width: u32) -> Result<(Size, Vec<u8>)> {
+    // A still would need the portal, and so its dialog, just for the picker.
+    anyhow::ensure!(id != PORTAL, "the desktop's own dialog shows the screens");
     let target = find_display(Some(id)).await?;
     #[cfg(windows)]
     {
