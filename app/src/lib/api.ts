@@ -60,6 +60,7 @@ export const api = {
   setOutputDevice: (device: string | null) => invoke<void>("set_output_device", { device }),
   setScreenAudio: (on: boolean) => invoke<void>("set_screen_audio", { on }),
   setMicTest: (on: boolean) => invoke<void>("set_mic_test", { on }),
+  setSensitivity: (db: number) => invoke<void>("set_sensitivity", { db }),
   setDeafened: (on: boolean) => invoke<void>("set_deafened", { on }),
   setPeerAudio: (id: string, stream: AudioStream, volume: number, muted: boolean) =>
     invoke<void>("set_peer_audio", { id, stream, volume, muted }),

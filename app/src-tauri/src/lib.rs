@@ -173,6 +173,14 @@ async fn set_deafened(state: tauri::State<'_, AppState>, on: bool) -> CommandRes
     Ok(())
 }
 
+/// The mic's noise gate threshold, in dBFS. A preference of this machine,
+/// which the webview keeps and sends at startup and on every change.
+#[tauri::command]
+async fn set_sensitivity(state: tauri::State<'_, AppState>, db: f32) -> CommandResult<()> {
+    node(&state).await?.set_sensitivity(db);
+    Ok(())
+}
+
 #[tauri::command]
 async fn set_mic_test(state: tauri::State<'_, AppState>, on: bool) -> CommandResult<()> {
     node(&state).await?.set_mic_test(on);
@@ -605,6 +613,7 @@ pub fn run() {
             set_screen_audio,
             set_peer_audio,
             set_mic_test,
+            set_sensitivity,
             set_deafened,
         ])
         .build(tauri::generate_context!())

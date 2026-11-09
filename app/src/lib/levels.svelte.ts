@@ -1,6 +1,7 @@
 // Voice levels, pushed by the backend ten times a second. Kept apart from the
 // snapshot so the speaking indicators update without redrawing anything else.
 
+import { api } from "./api";
 import type { Levels } from "./types";
 
 export const voice = $state<{ levels: Levels }>({ levels: {} });
@@ -20,7 +21,10 @@ export function fromDb(db: number): number {
 }
 
 // Input sensitivity: how loud our own mic has to be for us to count as
-// speaking. A preference of this machine only, so it lives in local storage.
+// speaking, and the mic's noise gate: below it the backend sends silence, so
+// nobody hears the room or sees us speaking. A preference of this machine
+// only, so it lives in local storage and is handed to the backend from here.
+// The bottom of the slider (METER_FLOOR_DB) turns the gate off.
 const SENSITIVITY_KEY = "noxid.sensitivityDb";
 const DEFAULT_SENSITIVITY_DB = -40;
 
@@ -37,8 +41,13 @@ function loadSensitivity(): number {
 
 export const prefs = $state({ sensitivityDb: loadSensitivity() });
 
+// The gate starts open in the backend; this closes it to the stored value as
+// soon as the app loads, before any call can start.
+void api.setSensitivity(prefs.sensitivityDb).catch(() => {});
+
 export function setSensitivity(db: number) {
   prefs.sensitivityDb = db;
+  void api.setSensitivity(db).catch(() => {});
   try {
     localStorage.setItem(SENSITIVITY_KEY, String(db));
   } catch {

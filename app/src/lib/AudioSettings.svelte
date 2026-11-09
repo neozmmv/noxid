@@ -114,7 +114,7 @@
   <div class="sensitivity">
     <label for="sensitivity">
       <span>Input sensitivity</span>
-      <output>{prefs.sensitivityDb} dB</output>
+      <output>{prefs.sensitivityDb <= METER_FLOOR_DB ? "Off" : `${prefs.sensitivityDb} dB`}</output>
     </label>
     <div class="meter" class:speaking aria-hidden="true">
       <div class="fill" style={`width: ${toPercent(shownDb)}%`}></div>
@@ -134,7 +134,8 @@
         Your mic is off, so the meter is still.
       {:else}
         Talk normally: the bar should pass the line while you speak and stay below it when you are
-        quiet. Move the slider left if your ring does not light up.
+        quiet. Below the line, others hear silence. Move the slider left if your ring does not
+        light up, or all the way left to send everything.
       {/if}
     </small>
   </div>

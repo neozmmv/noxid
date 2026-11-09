@@ -14,7 +14,7 @@ use serde::Serialize;
 
 pub(crate) use pcm::pcm_source;
 pub use system::{SystemAudio, system_audio_supported, window_audio_supported};
-pub use voice::Voice;
+pub use voice::{Sensitivity, Voice};
 
 /// An input or output device, as the device pickers show it.
 #[derive(Debug, Clone, Serialize)]

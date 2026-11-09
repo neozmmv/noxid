@@ -9,6 +9,9 @@
 //!
 //! One pipeline serves both the call and our own speaking indicator, so the
 //! level shown is the level sent, and the mic is opened once.
+//!
+//! Last comes the noise gate: below the input sensitivity the user set, what
+//! goes out is silence, so others neither hear the room nor see us speaking.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -37,6 +40,77 @@ const FIXED_GAIN_DB: f32 = 6.0;
 
 type Outlet = Arc<Mutex<Option<mpsc::Sender<Vec<f32>>>>>;
 
+/// How long the gate stays open after the voice last reached the threshold,
+/// in 10 ms frames: long enough for the quiet tail of a word and the gaps
+/// between words, short enough that the room is not heard after a sentence.
+const HOLD_FRAMES: u32 = 30;
+
+/// The input sensitivity, shared between the node and whichever mic is open.
+/// Cheap to clone; every clone sets the same threshold.
+#[derive(Clone, Debug, Default)]
+pub struct Sensitivity(Arc<AtomicU32>);
+
+impl Sensitivity {
+    /// At or below this the gate is off and everything is sent: the bottom of
+    /// the meter, where the UI's slider ends.
+    pub const OFF_DB: f32 = -60.0;
+
+    /// Sets the threshold in dBFS of the processed peak, as the meter shows it.
+    pub fn set_db(&self, db: f32) {
+        let level = if db.is_nan() || db <= Self::OFF_DB {
+            0.0
+        } else {
+            10f32.powf(db.min(0.0) / 20.0)
+        };
+        self.0.store(level.to_bits(), Ordering::Relaxed);
+    }
+
+    /// The threshold as a peak in `0.0..=1.0`; 0 lets everything through.
+    fn level(&self) -> f32 {
+        f32::from_bits(self.0.load(Ordering::Relaxed))
+    }
+}
+
+/// Sends silence while the voice is under the threshold.
+struct Gate {
+    sensitivity: Sensitivity,
+    /// Frames left before the gate closes.
+    hold: u32,
+    open: bool,
+}
+
+impl Gate {
+    fn new(sensitivity: Sensitivity) -> Self {
+        Self {
+            sensitivity,
+            hold: 0,
+            open: false,
+        }
+    }
+
+    /// Gates one frame whose peak is `peak`. It opens on the frame that
+    /// reaches the threshold, and closes by fading the last held frame out,
+    /// so the voice does not end in a click.
+    fn apply(&mut self, frame: &mut [f32], peak: f32) {
+        if peak >= self.sensitivity.level() {
+            self.hold = HOLD_FRAMES;
+        }
+        let open = self.hold > 0;
+        self.hold = self.hold.saturating_sub(1);
+        match (self.open, open) {
+            (_, true) => {}
+            (true, false) => {
+                let len = frame.len().max(1) as f32;
+                for (i, sample) in frame.iter_mut().enumerate() {
+                    *sample *= 1.0 - i as f32 / len;
+                }
+            }
+            (false, false) => frame.fill(0.0),
+        }
+        self.open = open;
+    }
+}
+
 /// A running, processed microphone.
 pub struct Voice {
     level: Arc<AtomicU32>,
@@ -55,9 +129,9 @@ impl std::fmt::Debug for Voice {
 
 impl Voice {
     /// Opens `device` (an id from [`super::devices`]), or the default
-    /// microphone for `None`, and starts processing. Nothing is sent anywhere
-    /// until [`source`](Self::source) is called.
-    pub fn start(device: Option<&str>) -> Result<Self> {
+    /// microphone for `None`, and starts processing, gated at `sensitivity`.
+    /// Nothing is sent anywhere until [`source`](Self::source) is called.
+    pub fn start(device: Option<&str>, sensitivity: Sensitivity) -> Result<Self> {
         let device = input::find_input(device)?;
         let level = Arc::new(AtomicU32::new(0));
         let outlet: Outlet = Arc::new(Mutex::new(None));
@@ -65,19 +139,24 @@ impl Voice {
         let mut chain = Chain::new(input::format(&device)?);
         let writer = level.clone();
         let out = outlet.clone();
+        let mut gate = Gate::new(sensitivity);
         let (running, format) = input::open(device, move |samples| {
             chain.push(samples, |processed| {
                 let peak = processed.iter().fold(0.0f32, |peak, s| peak.max(s.abs()));
                 // Held at the highest peak until read. For non-negative floats
                 // the bit patterns order like the values, so an integer max is
                 // a float max.
+                // The meter shows the level before the gate, so the threshold
+                // can be set against the voice it is cutting.
                 writer.fetch_max(peak.min(1.0).to_bits(), Ordering::Relaxed);
+                let mut frame = processed.to_vec();
+                gate.apply(&mut frame, peak);
                 // Never block the audio thread: a contended or full outlet
                 // drops this chunk.
                 if let Ok(slot) = out.try_lock()
                     && let Some(tx) = slot.as_ref()
                 {
-                    let _ = tx.try_send(processed.to_vec());
+                    let _ = tx.try_send(frame);
                 }
             });
         })?;
@@ -196,6 +275,58 @@ mod tests {
         }
         assert_eq!(frames, [480, 480]);
         assert_eq!(chain.pending.len(), 240);
+    }
+
+    fn gated(db: f32) -> Gate {
+        let sensitivity = Sensitivity::default();
+        sensitivity.set_db(db);
+        Gate::new(sensitivity)
+    }
+
+    /// Runs one frame of `amplitude` through `gate`; returns its new peak.
+    fn through(gate: &mut Gate, amplitude: f32) -> f32 {
+        let mut frame = vec![amplitude; 480];
+        gate.apply(&mut frame, amplitude);
+        frame.iter().fold(0.0f32, |p, s| p.max(s.abs()))
+    }
+
+    #[test]
+    fn the_gate_silences_what_is_under_the_threshold() {
+        let mut gate = gated(-20.0);
+        assert_eq!(through(&mut gate, 0.01), 0.0);
+    }
+
+    #[test]
+    fn the_gate_passes_speech_and_holds_open_after_it() {
+        let mut gate = gated(-20.0);
+        assert_eq!(through(&mut gate, 0.5), 0.5);
+        // The quiet tail of a word still goes out while the hold lasts.
+        for _ in 0..HOLD_FRAMES - 1 {
+            assert_eq!(through(&mut gate, 0.01), 0.01);
+        }
+        // Then it fades out over one frame, and stays shut.
+        let fading = through(&mut gate, 0.01);
+        assert!(fading > 0.0 && fading <= 0.01);
+        assert_eq!(through(&mut gate, 0.01), 0.0);
+    }
+
+    #[test]
+    fn the_fade_ends_at_silence() {
+        let mut gate = gated(-20.0);
+        through(&mut gate, 0.5);
+        for _ in 0..HOLD_FRAMES - 1 {
+            through(&mut gate, 0.01);
+        }
+        let mut frame = vec![0.01; 480];
+        gate.apply(&mut frame, 0.01);
+        assert!(frame[0] > frame[479]);
+        assert!(frame[479] < 0.0001);
+    }
+
+    #[test]
+    fn the_bottom_of_the_slider_turns_the_gate_off() {
+        let mut gate = gated(Sensitivity::OFF_DB);
+        assert_eq!(through(&mut gate, 0.0001), 0.0001);
     }
 
     #[test]

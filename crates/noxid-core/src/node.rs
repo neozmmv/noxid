@@ -270,6 +270,8 @@ pub(crate) struct Inner {
     pub audio_prefs: Mutex<HashMap<EndpointId, PeerAudio>>,
     /// Hear nobody, whatever their own volume says.
     pub deafened: std::sync::atomic::AtomicBool,
+    /// The mic's noise gate threshold, shared with the open mic.
+    sensitivity: audio::Sensitivity,
     /// File transfers, in and out.
     pub(crate) transfers: Transfers,
     /// The current roster's ids, which the mesh follows.
@@ -338,6 +340,7 @@ impl Node {
             quality_modes: Mutex::new(HashMap::new()),
             audio_prefs: Mutex::new(HashMap::new()),
             deafened: std::sync::atomic::AtomicBool::new(false),
+            sensitivity: audio::Sensitivity::default(),
             transfers: Transfers::default(),
             roster_tx,
             changed: watch::channel(0).0,
@@ -639,6 +642,14 @@ impl Node {
         self.inner.apply_mic(&mut local);
         drop(local);
         self.inner.bump();
+    }
+
+    /// Sets the mic's noise gate: below `db` (dBFS of the processed peak, as
+    /// the level meter shows it) silence is sent instead. At or below
+    /// [`audio::Sensitivity::OFF_DB`] everything is sent. Applies at once,
+    /// to the open mic too.
+    pub fn set_sensitivity(&self, db: f32) {
+        self.inner.sensitivity.set_db(db);
     }
 
     /// Runs the mic level meter outside a call, so the audio settings can show
@@ -1060,7 +1071,7 @@ impl Inner {
                     local.mic_published = false;
                 }
                 if wanted && local.mic.is_none() {
-                    match Voice::start(local.mic_device.as_deref()) {
+                    match Voice::start(local.mic_device.as_deref(), self.sensitivity.clone()) {
                         Ok(mic) => local.mic = Some((local.mic_device.clone(), mic)),
                         Err(e) => {
                             warn!("microphone unavailable: {e:#}");
