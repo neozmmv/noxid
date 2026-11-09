@@ -31,8 +31,9 @@ Then search for "Noxid" in the Start menu.
 curl -fsSL https://raw.githubusercontent.com/neozmmv/noxid/master/scripts/install.sh | sh
 ```
 
-On Debian and Ubuntu this installs the `.deb` through apt. Elsewhere it
-installs the AppImage under `~/.local` and adds a menu entry.
+On Debian and Ubuntu this installs the `.deb` through apt, and on Fedora the
+`.rpm` through dnf. Elsewhere it installs the AppImage under `~/.local` and
+adds a menu entry.
 
 Both scripts take `--version`/`-Version` to pick a release, `--local`/`-Local`
 to build from a checkout, and `--uninstall`/`-Uninstall`.
@@ -92,8 +93,8 @@ Type `help` in it for the commands.
 ## Releases
 
 Pushing a tag of the form `vX.Y.Z` (for example `v0.1.0`) builds the Windows
-installer, the `.deb` and the AppImage, and publishes them as a GitHub release
-named "Noxid vX.Y.Z", each with a `.sha256` file. The install scripts check that
+installer, the `.deb`, the `.rpm` and the AppImage, and publishes them as a
+GitHub release named "Noxid vX.Y.Z", each with a `.sha256` file. The install scripts check that
 hash before installing anything.
 
 Clippy, the tests and the frontend type check run as part of that workflow,

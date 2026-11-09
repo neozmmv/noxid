@@ -56,6 +56,15 @@
           "gstreamer1.0-plugins-base",
           "gstreamer1.0-plugins-good"
         ]
+      },
+      "rpm": {
+        "depends": [
+          "webkit2gtk4.1",
+          "pipewire-libs",
+          "alsa-lib",
+          "gstreamer1-plugins-base",
+          "gstreamer1-plugins-good"
+        ]
       }
     }
   }

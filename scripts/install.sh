@@ -9,9 +9,10 @@
 # Or straight from the web:
 #   curl -fsSL https://raw.githubusercontent.com/neozmmv/noxid/master/scripts/install.sh | sh
 #
-# On Debian and Ubuntu it installs the .deb through apt, which pulls in the
-# libraries it needs (asks for sudo). Elsewhere it installs the AppImage for
-# the current user under ~/.local, with no sudo.
+# On Debian and Ubuntu it installs the .deb through apt, and on Fedora the
+# .rpm through dnf; both pull in the libraries it needs (asks for sudo).
+# Elsewhere it installs the AppImage for the current user under ~/.local,
+# with no sudo.
 
 set -eu
 
@@ -34,7 +35,7 @@ while [ $# -gt 0 ]; do
         --version) VERSION="${2:?--version needs a tag}"; shift 2 ;;
         --local) LOCAL=1; shift ;;
         --uninstall) UNINSTALL=1; shift ;;
-        -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
         *) die "unknown option $1" ;;
     esac
 done
@@ -50,10 +51,17 @@ sudo_cmd() {
 
 use_deb() { has apt-get && has dpkg; }
 
+# The .rpm names Fedora's packages as its dependencies, so it is only offered
+# where dnf can resolve them.
+use_rpm() { has dnf && has rpm; }
+
 if [ "$UNINSTALL" -eq 1 ]; then
     if use_deb && dpkg -s noxid >/dev/null 2>&1; then
         info "removing the noxid package"
         sudo_cmd apt-get remove -y noxid
+    elif use_rpm && rpm -q noxid >/dev/null 2>&1; then
+        info "removing the noxid package"
+        sudo_cmd dnf remove -y noxid
     fi
     rm -f "$APPIMAGE" "$DESKTOP" "$ICON_DIR/noxid.png"
     info "done. Your identity and logs in ~/.config/noxid were kept; delete that folder to remove them too."
@@ -63,7 +71,10 @@ fi
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-if use_deb; then KIND=deb; else KIND=AppImage; fi
+if use_deb; then KIND=deb
+elif use_rpm; then KIND=rpm
+else KIND=AppImage
+fi
 ASSET="noxid-linux-x86_64.$KIND"
 
 fetch() {
@@ -79,13 +90,14 @@ if [ "$LOCAL" -eq 1 ]; then
     has cargo || die "--local needs cargo"
     has bun || die "--local needs bun (https://bun.sh)"
     info "building (the first build takes a while)"
-    if [ "$KIND" = deb ]; then BUNDLE=deb; else BUNDLE=appimage; fi
+    case "$KIND" in
+        deb) BUNDLE=deb; OUT=deb/*.deb ;;
+        rpm) BUNDLE=rpm; OUT=rpm/*.rpm ;;
+        *) BUNDLE=appimage; OUT=appimage/*.AppImage ;;
+    esac
     (cd "$ROOT/app" && bun install --frozen-lockfile && bun run tauri build --bundles "$BUNDLE")
-    if [ "$KIND" = deb ]; then
-        cp "$(ls -t "$ROOT"/target/release/bundle/deb/*.deb | head -n1)" "$WORK/$ASSET"
-    else
-        cp "$(ls -t "$ROOT"/target/release/bundle/appimage/*.AppImage | head -n1)" "$WORK/$ASSET"
-    fi
+    # $OUT is left unquoted on purpose, so the glob expands.
+    cp "$(ls -t "$ROOT"/target/release/bundle/$OUT | head -n1)" "$WORK/$ASSET"
 else
     if [ -n "$VERSION" ]; then
         BASE="https://github.com/$REPO/releases/download/$VERSION"
@@ -102,6 +114,15 @@ fi
 if [ "$KIND" = deb ]; then
     info "installing the package (apt pulls in WebKitGTK and PipeWire if missing)"
     sudo_cmd apt-get install -y "$WORK/$ASSET"
+    info "done. Open Noxid from your application menu, or run: noxid"
+    exit 0
+fi
+
+if [ "$KIND" = rpm ]; then
+    info "installing the package (pulls in WebKitGTK, PipeWire and GStreamer if missing)"
+    sudo_cmd dnf install -y "$WORK/$ASSET"
+    # An AppImage from an earlier install would leave a second menu entry.
+    rm -f "$APPIMAGE" "$DESKTOP" "$ICON_DIR/noxid.png"
     info "done. Open Noxid from your application menu, or run: noxid"
     exit 0
 fi

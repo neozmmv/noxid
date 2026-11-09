@@ -72,7 +72,7 @@ jobs:
             bundles: nsis
           - name: linux-x86_64
             os: ubuntu-latest
-            bundles: deb,appimage
+            bundles: deb,rpm,appimage
     steps:
       - uses: actions/checkout@v4
       - name: rust
@@ -130,6 +130,7 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           cp target/release/bundle/deb/*.deb "dist/noxid-${{ matrix.name }}.deb"
+          cp target/release/bundle/rpm/*.rpm "dist/noxid-${{ matrix.name }}.rpm"
           cp target/release/bundle/appimage/*.AppImage "dist/noxid-${{ matrix.name }}.AppImage"
           cp scripts/install.sh dist/install.sh
           cd dist
