@@ -78,19 +78,30 @@ mod platform {
     use anyhow::Context;
     use cpal::traits::{DeviceTrait, HostTrait};
 
+    /// cpal's PipeWire host names its device for the default output this.
+    /// Opened for input, it records what plays to that output (PipeWire's
+    /// `stream.capture.sink`), and follows the default when it changes.
+    const PIPEWIRE_DEFAULT_SINK: &str = "sink_default";
+
     pub(super) fn start(tx: mpsc::Sender<Vec<f32>>, _window: Option<&str>) -> Result<(u32, u32)> {
         // One application cannot be singled out here; see the module docs.
-        // PulseAudio and PipeWire's Pulse layer list a "Monitor of <output>"
-        // source for every output; the default output's comes first when the
-        // server lists the default sink first, which both do.
-        let device = cpal::default_host()
-            .input_devices()?
-            .find(|d| {
-                d.description()
-                    .map(|desc| desc.name().to_lowercase().contains("monitor"))
-                    .unwrap_or(false)
+        // cpal talks to PipeWire directly where it runs, and there lists no
+        // monitor sources, only outputs that can be recorded from. Under
+        // PulseAudio (or ALSA through its Pulse plugin) each output has a
+        // "Monitor of <output>" source instead; the default output's comes
+        // first, as the server lists the default sink first.
+        let mut devices: Vec<cpal::Device> = cpal::default_host().input_devices()?.collect();
+        let pick = devices
+            .iter()
+            .position(|d| d.id().is_ok_and(|id| id.id() == PIPEWIRE_DEFAULT_SINK))
+            .or_else(|| {
+                devices.iter().position(|d| {
+                    d.description()
+                        .is_ok_and(|desc| desc.name().to_lowercase().contains("monitor"))
+                })
             })
-            .context("no monitor source found; is PipeWire or PulseAudio running?")?;
+            .context("found no way to record the PC's sound; is PipeWire or PulseAudio running?")?;
+        let device = devices.swap_remove(pick);
 
         let sender = tx.clone();
         let (running, format) = super::super::input::open(device, move |samples| {
