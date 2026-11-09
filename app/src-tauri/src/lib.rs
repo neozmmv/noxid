@@ -387,6 +387,20 @@ fn open_release(tag: String) -> CommandResult<()> {
     tauri_plugin_opener::open_url(format!("{REPO}/releases/tag/{tag}"), None::<&str>).map_err(err)
 }
 
+/// WebKitGTK draws through DMA-BUF buffers, which NVIDIA's proprietary driver
+/// mishandles: the window opens and stays blank. With that driver loaded it
+/// draws through shared memory instead. Anyone can still pick for themselves
+/// by setting the variable before launch.
+#[cfg(target_os = "linux")]
+fn webkit_workarounds() {
+    const DMABUF: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
+    if std::env::var_os(DMABUF).is_none() && std::path::Path::new("/sys/module/nvidia").exists() {
+        // SAFETY: called first thing in `run`, before the log, the runtime or
+        // the webview start any thread that could read the environment.
+        unsafe { std::env::set_var(DMABUF, "1") };
+    }
+}
+
 /// The tag of the latest release on GitHub, or None when it can't be had
 /// (offline, rate-limited). Asked from here rather than from the webview: on
 /// Linux the webview's TLS looks for CA certificates where the distro it was
@@ -497,6 +511,9 @@ fn forward_events(app: tauri::AppHandle, node: Node) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    webkit_workarounds();
+
     noxid_core::log::init(noxid_core::log::path().or_else(|| {
         noxid_core::identity::state_dir()
             .ok()
