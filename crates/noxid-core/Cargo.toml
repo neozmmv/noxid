@@ -57,12 +57,18 @@ windows = { version = "0.62", features = [
 ] }
 windows-core = "0.62"
 
+# The desktop portal's D-Bus connection, opened on our own runtime so it
+# outlives each share; see `media::keep_portal_connection`. Same release
+# moq-video already compiles.
+[target.'cfg(target_os = "linux")'.dependencies]
+ashpd = { version = "0.13", optional = true, default-features = false, features = ["tokio", "screencast"] }
+
 [features]
 # Generated video and audio, so a call can be tested without devices.
 test-source = ["moq-media/test-source"]
 # Linux screen capture through xdg-desktop-portal, which Wayland requires.
 # Links libpipewire-0.3, so it is opt-in.
-pipewire = ["moq-media/pipewire"]
+pipewire = ["moq-media/pipewire", "dep:ashpd"]
 
 [dev-dependencies]
 anyhow.workspace = true

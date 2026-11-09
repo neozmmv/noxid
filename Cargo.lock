@@ -5167,6 +5167,7 @@ name = "noxid-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ashpd",
  "blake3",
  "bs58",
  "bytes",

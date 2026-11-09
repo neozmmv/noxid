@@ -269,6 +269,23 @@ pub struct Display {
 /// not the screen, so a share of one never sends a picture.
 const PORTAL: &str = "portal";
 
+/// Opens the desktop portal's D-Bus connection on the caller's runtime, which
+/// has to be one that lives as long as the app.
+///
+/// ashpd keeps one connection for the whole process, and with tokio its
+/// reader is a task on whichever runtime opened it first. Left to itself
+/// that is the first share's capture, which runs on a runtime of its own
+/// that ends with the share; the connection is then still handed out but
+/// nothing reads its replies, so the next share waits on the portal forever.
+#[cfg(all(target_os = "linux", feature = "pipewire"))]
+pub fn keep_portal_connection() {
+    tokio::spawn(async {
+        if let Err(e) = ashpd::desktop::screencast::Screencast::new().await {
+            tracing::debug!("the screen cast portal is not available: {e}");
+        }
+    });
+}
+
 /// Whether this is a Wayland session, where only the portal can capture.
 fn wayland() -> bool {
     cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some()

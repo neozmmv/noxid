@@ -305,6 +305,10 @@ impl Node {
             warn!("could not open the chosen output device, using the default: {e:#}");
         }
 
+        // Before any share, so the portal's connection lives on this runtime.
+        #[cfg(all(target_os = "linux", feature = "pipewire"))]
+        media::keep_portal_connection();
+
         let live = Live::builder(endpoint.clone()).spawn();
         let (roster_tx, roster_rx) = watch::channel(Vec::new());
         let inner = Arc::new(Inner {
