@@ -71,7 +71,9 @@ jobs:
             os: windows-latest
             bundles: nsis
           - name: linux-x86_64
-            os: ubuntu-latest
+            # Pinned: the build's Ubuntu sets the oldest glibc the packages
+            # run on, and install.sh checks for exactly that (2.39).
+            os: ubuntu-24.04
             bundles: deb,rpm,appimage
     steps:
       - uses: actions/checkout@v4
