@@ -387,6 +387,31 @@ fn open_release(tag: String) -> CommandResult<()> {
     tauri_plugin_opener::open_url(format!("{REPO}/releases/tag/{tag}"), None::<&str>).map_err(err)
 }
 
+/// The tag of the latest release on GitHub, or None when it can't be had
+/// (offline, rate-limited). Asked from here rather than from the webview: on
+/// Linux the webview's TLS looks for CA certificates where the distro it was
+/// built on keeps them, and in the AppImage that is Ubuntu's path, which
+/// Fedora and others don't have. rustls finds the system's own.
+#[tauri::command]
+async fn latest_release() -> Option<String> {
+    #[derive(Deserialize)]
+    struct Release {
+        tag_name: String,
+    }
+    let api = REPO.replace("https://github.com/", "https://api.github.com/repos/");
+    let response = reqwest::Client::new()
+        .get(format!("{api}/releases/latest"))
+        .header("Accept", "application/vnd.github+json")
+        // GitHub refuses requests without one.
+        .header("User-Agent", "noxid")
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+        .ok()?;
+    Some(response.json::<Release>().await.ok()?.tag_name)
+}
+
 /// The cameras this machine has.
 #[tauri::command]
 async fn cameras() -> Vec<media::CameraInfo> {
@@ -547,6 +572,7 @@ pub fn run() {
             dismiss_transfer,
             show_transfer,
             open_release,
+            latest_release,
             set_avatar,
             clear_avatar,
             avatar,

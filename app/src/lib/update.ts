@@ -3,8 +3,7 @@
 // compares that against the latest release on GitHub.
 
 import { getVersion } from "@tauri-apps/api/app";
-
-const LATEST = "https://api.github.com/repos/neozmmv/noxid/releases/latest";
+import { api } from "./api";
 
 type Version = [number, number, number];
 
@@ -23,9 +22,10 @@ function newer(a: Version, b: Version): boolean {
 export async function newerRelease(): Promise<string | null> {
   try {
     const current = parse(await getVersion());
-    const response = await fetch(LATEST, { headers: { Accept: "application/vnd.github+json" } });
-    if (!current || !response.ok) return null;
-    const { tag_name: tag } = (await response.json()) as { tag_name?: string };
+    // Rust makes the request: the webview's TLS can't find the system's
+    // certificates inside the AppImage on every distro.
+    const tag = await api.latestRelease();
+    if (!current) return null;
     const latest = tag ? parse(tag) : null;
     return latest && newer(latest, current) ? tag! : null;
   } catch {

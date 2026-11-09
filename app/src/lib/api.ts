@@ -40,6 +40,7 @@ export const api = {
   /** Opens the folder a received file was saved in. */
   showTransfer: (id: number) => invoke<void>("show_transfer", { id }),
   openRelease: (tag: string) => invoke<void>("open_release", { tag }),
+  latestRelease: () => invoke<string | null>("latest_release"),
   setAvatar: (image: Uint8Array) => invoke<void>("set_avatar", image),
   clearAvatar: () => invoke<void>("clear_avatar"),
   avatar: (hash: string) => invoke<ArrayBuffer>("avatar", { hash }),
