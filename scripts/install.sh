@@ -51,6 +51,17 @@ sudo_cmd() {
 
 use_deb() { has apt-get && has dpkg; }
 
+# The builds come from Ubuntu 24.04 and need its glibc or newer. Checked up
+# front so an older system gets a clear message instead of a binary that
+# won't start.
+need_glibc() {
+    ver="$(getconf GNU_LIBC_VERSION 2>/dev/null | cut -d' ' -f2)"
+    [ -n "$ver" ] || die "Noxid needs glibc; this system uses another C library (musl?)"
+    major="${ver%%.*}"; minor="${ver#*.}"; minor="${minor%%.*}"
+    if [ "$major" -lt 2 ] || { [ "$major" -eq 2 ] && [ "$minor" -lt 39 ]; }; then
+        die "Noxid needs glibc 2.39 or newer (this system has $ver); build it here with --local instead"
+    fi
+}
 # The .rpm names Fedora's packages as its dependencies, so it is only offered
 # where dnf can resolve them.
 use_rpm() { has dnf && has rpm; }
@@ -67,6 +78,8 @@ if [ "$UNINSTALL" -eq 1 ]; then
     info "done. Your identity and logs in ~/.config/noxid were kept; delete that folder to remove them too."
     exit 0
 fi
+
+[ "$LOCAL" -eq 1 ] || need_glibc
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT

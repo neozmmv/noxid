@@ -35,6 +35,9 @@ On Debian and Ubuntu this installs the `.deb` through apt, and on Fedora the
 `.rpm` through dnf. Elsewhere it installs the AppImage under `~/.local` and
 adds a menu entry.
 
+The prebuilt packages need glibc 2.39 or newer: Ubuntu 24.04, Debian 13,
+Fedora 40, a current Arch, or later. On older systems, build with `--local`.
+
 Both scripts take `--version`/`-Version` to pick a release, `--local`/`-Local`
 to build from a checkout, and `--uninstall`/`-Uninstall`.
 
