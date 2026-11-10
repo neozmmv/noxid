@@ -17,6 +17,8 @@ mod node;
 pub mod room;
 #[cfg(windows)]
 mod still;
+#[cfg(windows)]
+mod wgc;
 
 pub use node::{
     KnockView, MAX_SCREEN_VOLUME, MAX_VOLUME, MemberView, Node, NodeConfig, Notice, PeerAudio, PeerView, QualityMode,

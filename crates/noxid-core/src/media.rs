@@ -600,8 +600,22 @@ impl Screen {
         }
     }
 
-    fn source(&self, rate: Framerate) -> VideoSource {
+    /// What captures this share. `now` stamps frames the media stack does not
+    /// capture itself, on the broadcast's clock so they line up with the sound.
+    fn source(
+        &self,
+        rate: Framerate,
+        #[allow(unused_variables, reason = "only Windows captures windows itself")] now: impl Fn() -> moq_net::Timestamp
+        + Send
+        + 'static,
+    ) -> VideoSource {
         match self {
+            // See `wgc` for why a window is not left to the media stack's GDI
+            // capture on Windows.
+            #[cfg(windows)]
+            Screen::Display(display) if display.kind == Kind::Window && crate::wgc::supported() => {
+                VideoSource::Frames(window_frames(display.id.clone(), rate.fps(), now))
+            }
             Screen::Display(display) => {
                 let mut config = capture::Config::default();
                 config.framerate = iroh_live::media::video::Rate::new(rate.fps(), 1).ok();
@@ -611,6 +625,60 @@ impl Screen {
             #[cfg(feature = "test-source")]
             Screen::Test => iroh_live::media::test_source::video(test_pattern(), rate.fps()),
         }
+    }
+}
+
+/// A window captured through Windows Graphics Capture, as a stream of frames.
+/// The capture opens on the first poll, off the async threads, and closes
+/// when the stream is dropped. A capture that will not open ends the stream
+/// at once, which the share's watcher sees as a stopped capture.
+#[cfg(windows)]
+fn window_frames(
+    id: String,
+    fps: u32,
+    now: impl Fn() -> moq_net::Timestamp + Send + 'static,
+) -> n0_future::boxed::BoxStream<Frame> {
+    use tokio::sync::mpsc::Receiver;
+    let mut now = Some(now);
+    Box::pin(n0_future::stream::unfold(None::<Receiver<Frame>>, move |open| {
+        let id = id.clone();
+        let now = now.take();
+        async move {
+            let mut frames = match (open, now) {
+                (Some(frames), _) => frames,
+                (None, Some(now)) => {
+                    match tokio::task::spawn_blocking(move || crate::wgc::open(&id, fps, now)).await {
+                        Ok(Ok(frames)) => frames,
+                        Ok(Err(e)) => {
+                            tracing::warn!("the window capture would not open: {e:#}");
+                            return None;
+                        }
+                        Err(_) => return None,
+                    }
+                }
+                (None, None) => return None,
+            };
+            let frame = frames.recv().await?;
+            Some((frame, Some(frames)))
+        }
+    }))
+}
+
+/// Adjusts `ladder` for a source the media stack takes frames from as they
+/// come, rather than capturing itself.
+///
+/// The stack cannot know such a source's rate, so it sets every encoder up for
+/// 30 fps, and the encoders budget bits per frame and count keyframe intervals
+/// in frames from that. At 60 fps that would send twice the bitrate and a
+/// keyframe every second; scaling both by 30/fps lands them where they belong.
+fn for_assumed_rate(ladder: &mut [VideoRendition], rate: Framerate) {
+    const ASSUMED: u64 = 30;
+    let fps = u64::from(rate.fps());
+    for rendition in ladder {
+        rendition.bitrate = rendition.bitrate.map(|bitrate| bitrate * ASSUMED / fps);
+        rendition.keyframe_interval = rendition
+            .keyframe_interval
+            .map(|interval| interval * rate.fps() / ASSUMED as u32);
     }
 }
 
@@ -852,9 +920,15 @@ impl Mic {
 
 /// Starts sharing `screen` as `send` says, replacing any share in progress.
 pub fn share_screen(broadcast: &LocalBroadcast, screen: &Screen, send: Outgoing) -> Result<()> {
+    let clock = *broadcast.clock();
+    let source = screen.source(send.rate, move || clock.now());
+    let mut renditions = ladder(screen.size(), send);
+    if matches!(source, VideoSource::Frames(_)) {
+        for_assumed_rate(&mut renditions, send.rate);
+    }
     broadcast
         .video()
-        .set_renditions(screen.source(send.rate), ladder(screen.size(), send))
+        .set_renditions(source, renditions)
         .map_err(|e| anyhow::anyhow!("{e:#}"))
 }
 
@@ -979,6 +1053,33 @@ mod tests {
         let ladder = ladder(Size::new(1280, 720), send);
         assert_eq!(ladder.len(), 2);
         assert_eq!(ladder[1].bitrate, Some(4_000_000));
+    }
+
+    #[test]
+    fn a_self_paced_source_is_budgeted_for_its_real_rate() {
+        let send = Outgoing {
+            rate: 60.try_into().unwrap(),
+            ..send(Quality::High)
+        };
+        let mut ladder = ladder(Size::new(1920, 1080), send);
+        let wanted: Vec<_> = ladder.iter().map(|r| r.bitrate.unwrap()).collect();
+        for_assumed_rate(&mut ladder, send.rate);
+        for (rendition, wanted) in ladder.iter().zip(wanted) {
+            // Set up for 30 fps and fed 60, the encoder sends twice this.
+            assert_eq!(rendition.bitrate.unwrap() * 2, wanted);
+            // And counts 30 frames a second: 4 s of those is 2 s at 60.
+            assert_eq!(rendition.keyframe_interval, Some(KEYFRAME_INTERVAL * 2));
+        }
+
+        let mut ladder = ladder_at_30();
+        let before: Vec<_> = ladder.iter().map(|r| (r.bitrate, r.keyframe_interval)).collect();
+        for_assumed_rate(&mut ladder, Framerate::default());
+        let after: Vec<_> = ladder.iter().map(|r| (r.bitrate, r.keyframe_interval)).collect();
+        assert_eq!(before, after, "30 fps is what the encoder assumes already");
+    }
+
+    fn ladder_at_30() -> Vec<VideoRendition> {
+        ladder(Size::new(1920, 1080), send(Quality::High))
     }
 
     #[test]

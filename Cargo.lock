@@ -5190,6 +5190,7 @@ dependencies = [
  "tracing-subscriber",
  "windows",
  "windows-core",
+ "yuv",
 ]
 
 [[package]]
