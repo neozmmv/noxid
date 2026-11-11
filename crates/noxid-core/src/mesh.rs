@@ -421,12 +421,22 @@ async fn serve_screen(inner: &Inner, id: EndpointId, sub: &Subscription) {
                 .copied()
                 .unwrap_or_default();
             if applied != Some(mode) {
+                let available: Vec<String> = broadcast.catalog().video().keys().cloned().collect();
                 match mode {
-                    QualityMode::Auto => track.enable_adaptation_with(sub.signals().clone(), adaptation()),
+                    // Adaptation steps from whatever rung is playing, and its
+                    // estimate rarely reads high enough to climb to the top
+                    // over home internet. Starting at the top and letting it
+                    // step down keeps 1080p on links that carry it, without
+                    // holding a link that cannot at a rung it will only ever
+                    // deliver seconds late.
+                    QualityMode::Auto => {
+                        if let Some(name) = closest(Quality::High, &available) {
+                            track.set_rendition(name);
+                        }
+                        track.enable_adaptation_with(sub.signals().clone(), adaptation());
+                    }
                     QualityMode::Pinned(wanted) => {
                         track.disable_adaptation();
-                        let available: Vec<String> =
-                            broadcast.catalog().video().keys().cloned().collect();
                         if let Some(name) = closest(wanted, &available) {
                             track.set_rendition(name);
                         }
