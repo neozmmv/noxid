@@ -748,7 +748,7 @@
     gap: 0.7rem;
     padding: 0.7rem 1rem;
     border-radius: 14px;
-    background: var(--dusk);
+    background: var(--surface);
     border: 1px solid var(--line);
     border-left: 4px solid var(--lamp);
   }

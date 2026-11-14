@@ -5,6 +5,10 @@
   /* Controls sit on a violet a step up from the night; hairlines a step
      above that, so a bordered control still shows its edge. */
   --dusk-raised: #1d1748;
+  /* The open view sits on a panel a shade above the night, beside the rail;
+     cards and highlighted rows sit a shade above the panel. */
+  --panel: #0c0828;
+  --surface: #140f3a;
   --line: #262059;
   --dusk-hover: #0a177b;
   --moon: #f3f1fa;
@@ -164,7 +168,7 @@ select.field option {
   padding: 24px;
   border: 1px solid var(--line);
   border-radius: var(--radius-card);
-  background: var(--dusk);
+  background: var(--surface);
 }
 
 /* A small count beside a label or on an icon. */

@@ -87,7 +87,7 @@
   }
 
   .row:hover {
-    background: var(--dusk);
+    background: var(--surface);
   }
 
   .who {

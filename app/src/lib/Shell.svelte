@@ -51,9 +51,19 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
+  /* The open view, on a panel of its own rather than behind a rule. */
   .content {
     min-width: 0;
-    height: 100%;
+    min-height: 0;
+    margin: 0 8px 8px 0;
+    border-radius: var(--radius-card);
+    background: var(--panel);
     overflow: auto;
+  }
+
+  /* A share filling the screen keeps every pixel. */
+  .bare .content {
+    margin: 0;
+    border-radius: 0;
   }
 </style>

@@ -80,8 +80,7 @@
     gap: 8px;
     width: var(--rail-w);
     height: 100%;
-    padding: 12px 0;
-    border-right: 1px solid var(--line);
+    padding: 4px 0 12px;
     background: var(--ink);
     overflow-y: auto;
     overflow-x: hidden;
