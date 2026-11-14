@@ -50,7 +50,9 @@ to build from a checkout, and `--uninstall`/`-Uninstall`.
   - an **invite**, which lets one person straight in, once, within 30
     minutes.
 - **Join a room** takes either kind of code.
-- When the host leaves, the room ends for everyone.
+- When the host leaves, the next person to have joined becomes the host and
+  the call carries on; the room code changes to theirs. The host can also
+  choose to end the room for everyone.
 
 ### Friends
 
