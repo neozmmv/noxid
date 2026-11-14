@@ -569,6 +569,9 @@
     padding: 1.25rem 1.5rem 1rem;
     gap: 0.9rem;
     overflow: hidden;
+    /* Sized by the shell's content area, not the window, now that the rail
+       takes part of it. */
+    container-type: inline-size;
   }
 
   .room > :global(*) {
@@ -669,8 +672,18 @@
     border-bottom: 1px solid var(--line);
   }
 
+  /* Next to the rail at the smallest window, two columns leave the codes no
+     room; one above the other instead. */
+  @container (max-width: 600px) {
+    .invite {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 1rem;
+    }
+  }
+
   .invite > div {
     display: grid;
+    min-width: 0;
     gap: 0.5rem;
     align-content: start;
     justify-items: start;

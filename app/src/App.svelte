@@ -3,8 +3,7 @@
   import { api, onSnapshot, onNotice, onLevels, connectFrames } from "./lib/api";
   import { voice } from "./lib/levels.svelte";
   import type { Notice, Snapshot } from "./lib/types";
-  import Lobby from "./lib/Lobby.svelte";
-  import Room from "./lib/Room.svelte";
+  import Shell from "./lib/Shell.svelte";
   import Titlebar from "./lib/Titlebar.svelte";
 
   let snapshot = $state<Snapshot | null>(null);
@@ -57,10 +56,8 @@
       <div class="pulse" aria-hidden="true"></div>
       <p>Finding the network…</p>
     </section>
-  {:else if snapshot.room}
-    <Room {snapshot} />
   {:else}
-    <Lobby {snapshot} />
+    <Shell {snapshot} />
   {/if}
 
   {#if notice}
@@ -72,7 +69,7 @@
   /* Below the titlebar, which stays put while the page scrolls. */
   main {
     height: calc(100% - 34px);
-    overflow: auto;
+    overflow: hidden;
   }
 
   .status {

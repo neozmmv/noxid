@@ -15,6 +15,11 @@
   /* Behind dialogs: the night, thickened. */
   --scrim: rgb(4 2 12 / 0.72);
 
+  /* Layout: the navigation rail, cards and fields, on a 4px grid. */
+  --rail-w: 68px;
+  --radius-card: 12px;
+  --field-h: 44px;
+
   --font: "Familjen Grotesk Variable", system-ui, sans-serif;
   /* Type scale on a 1.25 ratio from a 15px body. */
   --step--1: 0.8rem;
@@ -81,6 +86,7 @@ button {
 /* Shared control vocabulary. */
 .field {
   width: 100%;
+  min-height: var(--field-h);
   padding: 0.65rem 0.8rem;
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -153,6 +159,29 @@ select.field option {
   border-color: var(--line);
 }
 
+/* A grouped panel on the night: one step up, a hairline, rounded. */
+.card {
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--dusk);
+}
+
+/* A small count beside a label or on an icon. */
+.badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--lamp);
+  color: var(--ink);
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
 /* Labels for icon controls, from lib/tooltip.ts. Moonlit, so they read as
    a note above the night rather than one more control. */
 .tooltip {
@@ -186,6 +215,15 @@ select.field option {
   --rise: -3px;
 }
 
+.tooltip[data-side="right"] {
+  --rise: 0px;
+  translate: -3px 0;
+}
+
+.tooltip[data-side="right"].shown {
+  translate: 0 0;
+}
+
 .tooltip.shown {
   opacity: 1;
   translate: 0 0;
@@ -211,6 +249,12 @@ select.field option {
 .tooltip[data-side="below"]::after {
   top: 0;
   border-radius: 2px 0 0 0;
+}
+
+.tooltip[data-side="right"]::after {
+  left: 0;
+  top: var(--notch-y, 50%);
+  border-radius: 0 0 0 2px;
 }
 
 .tooltip kbd {
