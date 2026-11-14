@@ -1,6 +1,8 @@
 <script lang="ts">
   import { api } from "./api";
   import { setMic } from "./controls";
+  import { friends } from "./friendlist.svelte";
+  import { showToast } from "./toast.svelte";
   import Menu from "./Menu.svelte";
   import type { AudioStream, MemberView } from "./types";
 
@@ -26,6 +28,33 @@
   }
 
   const percent = (gain: number) => Math.round(gain * 100);
+
+  // Where we stand with them as friends, from the list the backend sent.
+  // Their member id is their endpoint id, which is what a Noxid ID is.
+  const friendship = $derived.by(() => {
+    const view = friends.view;
+    if (!view || view.problem) return "unavailable";
+    const friend = view.friends.find((f) => f.id === member.id);
+    if (friend) return friend.finishing ? "finishing" : "friends";
+    if (view.incoming.some((r) => r.id === member.id)) return "incoming";
+    if (view.outgoing.some((r) => r.id === member.id)) return "outgoing";
+    return "none";
+  });
+
+  async function befriend() {
+    onclose();
+    try {
+      if (friendship === "incoming") {
+        await api.answerFriendRequest(member.id, true);
+        showToast(`Accepted ${member.name}'s friend request.`);
+      } else {
+        await api.sendFriendRequest(member.id);
+        showToast(`Friend request sent to ${member.name}. You'll be friends once they accept.`);
+      }
+    } catch (e) {
+      showToast(String(e));
+    }
+  }
 
   let confirmingRemove = $state(false);
 
@@ -73,6 +102,17 @@
     <button class="item" disabled={!member.connected} onclick={() => (onsendfile(), onclose())}>
       Send a file…
     </button>
+    {#if friendship === "none"}
+      <button class="item" onclick={befriend}>Add friend</button>
+    {:else if friendship === "incoming"}
+      <button class="item" onclick={befriend}>Accept friend request</button>
+    {:else if friendship === "outgoing"}
+      <button class="item" disabled>Friend request sent</button>
+    {:else if friendship === "finishing"}
+      <button class="item" disabled>Becoming friends…</button>
+    {:else if friendship === "friends"}
+      <button class="item" disabled>Friends</button>
+    {/if}
 
     {#if member.has_screen_audio}
       <hr />
