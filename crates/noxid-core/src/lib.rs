@@ -8,6 +8,7 @@ pub mod audio;
 #[cfg(windows)]
 mod dshow;
 pub mod files;
+pub mod friends;
 mod gate;
 pub mod identity;
 pub mod log;
