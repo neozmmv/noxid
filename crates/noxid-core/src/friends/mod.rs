@@ -3,6 +3,8 @@
 //!
 //! - `wire`: the messages.
 //! - `state`: the state machine both peers run.
+//! - `store`: the list on disk.
 
 pub mod state;
+pub mod store;
 pub mod wire;
