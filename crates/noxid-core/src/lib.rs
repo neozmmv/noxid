@@ -16,6 +16,7 @@ pub mod media;
 mod mesh;
 mod node;
 pub mod room;
+mod rpc;
 #[cfg(windows)]
 mod still;
 #[cfg(windows)]

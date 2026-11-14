@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use crate::node::{Inner, Notice};
+use crate::rpc;
 use crate::room::{Code, Member};
 
 pub const ADMIN_ALPN: &[u8] = b"noxid-admin/0";
@@ -109,38 +110,12 @@ impl std::fmt::Debug for AdminHandler {
 impl ProtocolHandler for AdminHandler {
     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
         let requester = connection.remote_id().to_string();
-
-        let request = tokio::time::timeout(REQUEST_TIMEOUT, async {
-            let (send, mut recv) = connection.accept_bi().await?;
-            let data = recv
-                .read_to_end(MAX_MESSAGE)
-                .await
-                .map_err(std::io::Error::other)?;
-            Ok::<_, AcceptError>((send, data))
-        })
-        .await;
-        let (mut send, data) = match request {
-            Ok(result) => result?,
-            Err(_) => {
-                connection.close(1u32.into(), b"request timed out");
-                return Ok(());
-            }
+        let (send, response) = match rpc::read_request(&connection, MAX_MESSAGE, REQUEST_TIMEOUT).await? {
+            rpc::Incoming::Request(send, request) => (send, self.dispatch(request, &requester).await),
+            rpc::Incoming::Malformed(send, message) => (send, error(message)),
+            rpc::Incoming::TimedOut => return Ok(()),
         };
-
-        let response = match serde_json::from_slice(&data) {
-            Ok(request) => self.dispatch(request, &requester).await,
-            Err(e) => error(format!("malformed request: {e}")),
-        };
-
-        let payload = serde_json::to_vec(&response).map_err(std::io::Error::other)?;
-        send.write_all(&payload)
-            .await
-            .map_err(std::io::Error::other)?;
-        send.finish()?;
-        // Give the reply a moment to reach the caller, who closes once it has
-        // read it; never wait on a peer that does not.
-        let _ = tokio::time::timeout(Duration::from_secs(5), connection.closed()).await;
-        Ok(())
+        rpc::reply(&connection, send, &response).await
     }
 }
 
@@ -447,20 +422,5 @@ async fn call(
     request: AdminRequest,
     timeout: Duration,
 ) -> Result<AdminResponse> {
-    tokio::time::timeout(timeout, async {
-        let conn: Connection = endpoint.connect(to, ADMIN_ALPN).await.context("connect")?;
-        let (mut send, mut recv) = conn.open_bi().await.context("open stream")?;
-        send.write_all(&serde_json::to_vec(&request)?)
-            .await
-            .context("write")?;
-        send.finish().context("finish")?;
-        let data = recv
-            .read_to_end(MAX_MESSAGE)
-            .await
-            .context("read response")?;
-        conn.close(0u32.into(), b"done");
-        serde_json::from_slice(&data).context("parse response")
-    })
-    .await
-    .context("timed out")?
+    rpc::call(endpoint, to, ADMIN_ALPN, &request, MAX_MESSAGE, timeout).await
 }
