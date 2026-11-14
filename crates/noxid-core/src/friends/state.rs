@@ -320,7 +320,10 @@ impl Book {
                 id: *id,
                 name: own_name.to_string(),
             }),
-            Relation::Accepting { id, .. } => Some(FriendMsg::Accept { id: *id }),
+            Relation::Accepting { id, .. } => Some(FriendMsg::Accept {
+                id: *id,
+                name: own_name.to_string(),
+            }),
             Relation::Closed {
                 id,
                 reason,
@@ -377,12 +380,13 @@ impl Book {
         let current = self.relation(&peer).cloned();
         match msg {
             FriendMsg::Request { id, name } => self.on_request(peer, *id, name, current, now),
-            FriendMsg::Accept { id } => match current {
+            FriendMsg::Accept { id, name } => match current {
                 Some(Relation::Outgoing { id: ours, .. }) if ours == *id => {
                     if self.friend_count() >= MAX_FRIENDS {
                         return FriendReply::Busy;
                     }
                     self.set(peer, Relation::Friends { id: ours, since: now });
+                    self.set_name(&peer, name);
                     FriendReply::Ack
                 }
                 Some(Relation::Friends { id: ours, .. }) if ours == *id => FriendReply::Ack,
@@ -546,17 +550,17 @@ impl Book {
                 self.close(peer, ours, *reason, Side::Them, now);
                 true
             }
-            (FriendMsg::Accept { id }, Relation::Accepting { id: ours, .. }, FriendReply::Ack) if ours == *id => {
+            (FriendMsg::Accept { id, .. }, Relation::Accepting { id: ours, .. }, FriendReply::Ack) if ours == *id => {
                 self.set(peer, Relation::Friends { id: ours, since: now });
                 true
             }
-            (FriendMsg::Accept { id }, Relation::Accepting { id: ours, .. }, FriendReply::Gone { reason })
+            (FriendMsg::Accept { id, .. }, Relation::Accepting { id: ours, .. }, FriendReply::Gone { reason })
                 if ours == *id =>
             {
                 self.close(peer, ours, *reason, Side::Them, now);
                 true
             }
-            (FriendMsg::Accept { id }, Relation::Accepting { id: ours, .. }, FriendReply::Unknown) if ours == *id => {
+            (FriendMsg::Accept { id, .. }, Relation::Accepting { id: ours, .. }, FriendReply::Unknown) if ours == *id => {
                 self.close(peer, ours, CloseReason::Canceled, Side::Them, now);
                 true
             }
@@ -721,6 +725,16 @@ mod tests {
         assert!(p.b.is_friend(&p.ia));
         assert!(p.friends_with_same_id());
         assert_eq!(p.b.pending(&p.ia, "bob"), None);
+    }
+
+    #[test]
+    fn the_accepters_name_comes_with_the_acceptance() {
+        let mut p = Pair::new();
+        p.a.request(p.ib, T0).unwrap();
+        p.a_to_b(T0);
+        p.b.accept(&p.ia, T0).unwrap();
+        p.b_to_a(T0);
+        assert_eq!(p.a.record(&p.ib).unwrap().name, "bob");
     }
 
     #[test]
@@ -971,7 +985,7 @@ mod tests {
 
     fn accept_id(msg: &FriendMsg) -> RequestId {
         match msg {
-            FriendMsg::Accept { id } => *id,
+            FriendMsg::Accept { id, .. } => *id,
             other => panic!("not an accept: {other:?}"),
         }
     }
@@ -1000,7 +1014,7 @@ mod tests {
         a.request(ib, T0).unwrap();
         let id = a.relation(&ib).unwrap().id();
         // C learned B's request id somehow and claims it.
-        let reply = a.on_message(ic, &FriendMsg::Accept { id }, T0);
+        let reply = a.on_message(ic, &FriendMsg::Accept { id, name: String::new() }, T0);
         assert_eq!(reply, FriendReply::Unknown);
         assert!(!a.is_friend(&ib) && !a.is_friend(&ic));
         assert!(matches!(a.relation(&ib), Some(Relation::Outgoing { .. })));
@@ -1011,7 +1025,7 @@ mod tests {
         let (ia, ib) = (key(1), key(2));
         let mut a = Book::new(ia);
         a.request(ib, T0).unwrap();
-        let reply = a.on_message(ib, &FriendMsg::Accept { id: RequestId([9; 16]) }, T0);
+        let reply = a.on_message(ib, &FriendMsg::Accept { id: RequestId([9; 16]), name: String::new() }, T0);
         assert_eq!(reply, FriendReply::Unknown);
         assert!(!a.is_friend(&ib));
     }
@@ -1019,7 +1033,7 @@ mod tests {
     #[test]
     fn an_unsolicited_accept_is_refused() {
         let mut a = Book::new(key(1));
-        let reply = a.on_message(key(2), &FriendMsg::Accept { id: RequestId([9; 16]) }, T0);
+        let reply = a.on_message(key(2), &FriendMsg::Accept { id: RequestId([9; 16]), name: String::new() }, T0);
         assert_eq!(reply, FriendReply::Unknown);
         assert!(a.relation(&key(2)).is_none());
     }

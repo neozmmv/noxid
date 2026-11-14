@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use iroh::EndpointId;
 use noxid_core::media::{self, Mic, Quality, Screen};
 use noxid_core::audio::AudioDevice;
+use noxid_core::friends::{FriendsView, RingOutcome, parse_friend_id};
 use noxid_core::{Node, NodeConfig, QualityMode, Snapshot, Stream};
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager, RunEvent};
@@ -483,6 +484,87 @@ async fn set_peer_quality(
     Ok(())
 }
 
+/// A Noxid ID from the webview, checked here whatever the webview checked.
+fn friend_id(node: &Node, text: &str) -> CommandResult<EndpointId> {
+    parse_friend_id(text, node.id()).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn friends(state: tauri::State<'_, AppState>) -> CommandResult<FriendsView> {
+    Ok(node(&state).await?.friends().view())
+}
+
+/// Checks a pasted Noxid ID and returns it in its canonical form.
+#[tauri::command]
+async fn check_friend_id(state: tauri::State<'_, AppState>, text: String) -> CommandResult<String> {
+    let node = node(&state).await?;
+    Ok(friend_id(&node, &text)?.to_string())
+}
+
+#[tauri::command]
+async fn send_friend_request(state: tauri::State<'_, AppState>, id: String) -> CommandResult<()> {
+    let node = node(&state).await?;
+    let peer = friend_id(&node, &id)?;
+    node.friends().send_request(peer).await.map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn answer_friend_request(state: tauri::State<'_, AppState>, id: String, accept: bool) -> CommandResult<()> {
+    let node = node(&state).await?;
+    let peer = friend_id(&node, &id)?;
+    node.friends().answer(peer, accept).await.map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn cancel_friend_request(state: tauri::State<'_, AppState>, id: String) -> CommandResult<()> {
+    let node = node(&state).await?;
+    let peer = friend_id(&node, &id)?;
+    node.friends().cancel(peer).await.map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn remove_friend(state: tauri::State<'_, AppState>, id: String) -> CommandResult<()> {
+    let node = node(&state).await?;
+    let peer = friend_id(&node, &id)?;
+    node.friends().remove(peer).await.map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn retry_friend_request(state: tauri::State<'_, AppState>, id: String) -> CommandResult<()> {
+    let node = node(&state).await?;
+    let peer = friend_id(&node, &id)?;
+    node.friends().retry(peer);
+    Ok(())
+}
+
+/// Rings a friend into our room and resolves once they answer, decline, miss
+/// it, or we hang up.
+#[tauri::command]
+async fn call_friend(state: tauri::State<'_, AppState>, id: String) -> CommandResult<RingOutcome> {
+    let node = node(&state).await?;
+    let peer = friend_id(&node, &id)?;
+    node.call_friend(peer).await.map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn hang_up(state: tauri::State<'_, AppState>) -> CommandResult<()> {
+    node(&state).await?.friends().hang_up();
+    Ok(())
+}
+
+#[tauri::command]
+async fn answer_ring(state: tauri::State<'_, AppState>, id: String, accept: bool) -> CommandResult<()> {
+    let node = node(&state).await?;
+    let peer = friend_id(&node, &id)?;
+    node.answer_ring(peer, accept).await.map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn dismiss_missed_calls(state: tauri::State<'_, AppState>) -> CommandResult<()> {
+    node(&state).await?.friends().dismiss_missed();
+    Ok(())
+}
+
 /// Forwards state changes and notices to the webview for as long as the app
 /// runs, and voice levels on a fast timer of their own.
 fn forward_events(app: tauri::AppHandle, node: Node) {
@@ -499,13 +581,21 @@ fn forward_events(app: tauri::AppHandle, node: Node) {
     }
     let mut changes = node.changes();
     let mut notices = node.notices();
+    let mut friend_changes = node.friends().changes();
     tauri::async_runtime::spawn(async move {
         let _ = app.emit("snapshot", node.snapshot());
+        let _ = app.emit("friends", node.friends().view());
         loop {
             tokio::select! {
                 changed = changes.changed() => {
                     if changed.is_err() { break; }
                     let _ = app.emit("snapshot", node.snapshot());
+                }
+                // Apart from the snapshot, so presence and requests never
+                // redraw the call.
+                changed = friend_changes.changed() => {
+                    if changed.is_err() { break; }
+                    let _ = app.emit("friends", node.friends().view());
                 }
                 notice = notices.recv() => {
                     if let Ok(notice) = notice {
@@ -615,6 +705,17 @@ pub fn run() {
             set_mic_test,
             set_sensitivity,
             set_deafened,
+            friends,
+            check_friend_id,
+            send_friend_request,
+            answer_friend_request,
+            cancel_friend_request,
+            remove_friend,
+            retry_friend_request,
+            call_friend,
+            hang_up,
+            answer_ring,
+            dismiss_missed_calls,
         ])
         .build(tauri::generate_context!())
         .expect("error while building the app");

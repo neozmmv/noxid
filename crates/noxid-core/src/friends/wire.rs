@@ -73,8 +73,13 @@ pub enum FriendMsg {
         #[serde(default)]
         name: String,
     },
-    /// Says yes to the request `id`.
-    Accept { id: RequestId },
+    /// Says yes to the request `id`. `name` is the accepter's label, so the
+    /// requester has something better to show than an id.
+    Accept {
+        id: RequestId,
+        #[serde(default)]
+        name: String,
+    },
     /// Says no to the request `id`.
     Decline { id: RequestId },
     /// Withdraws our request `id`.
@@ -131,9 +136,9 @@ mod tests {
     #[test]
     fn request_ids_go_over_the_wire_as_hex() {
         let id = RequestId([0xab; 16]);
-        let json = serde_json::to_string(&FriendMsg::Accept { id }).unwrap();
-        assert_eq!(json, format!(r#"{{"op":"accept","id":"{}"}}"#, "ab".repeat(16)));
-        assert_eq!(serde_json::from_str::<FriendMsg>(&json).unwrap(), FriendMsg::Accept { id });
+        let json = serde_json::to_string(&FriendMsg::Cancel { id }).unwrap();
+        assert_eq!(json, format!(r#"{{"op":"cancel","id":"{}"}}"#, "ab".repeat(16)));
+        assert_eq!(serde_json::from_str::<FriendMsg>(&json).unwrap(), FriendMsg::Cancel { id });
     }
 
     #[test]

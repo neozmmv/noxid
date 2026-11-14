@@ -260,7 +260,7 @@ async fn a_stale_acceptance_cannot_bring_back_a_removed_friend() {
     until("B saw the removal", || !b.friends.is_friend(&a.id())).await;
 
     // B's old Accept turns up again.
-    let payload = serde_json::to_vec(&FriendMsg::Accept { id: request_id }).unwrap();
+    let payload = serde_json::to_vec(&FriendMsg::Accept { id: request_id, name: String::new() }).unwrap();
     let reply = raw_call(&b.endpoint, a.id(), &payload).await;
     assert!(matches!(reply, Some(FriendReply::Gone { .. })), "{reply:?}");
     assert!(!a.friends.is_friend(&b.id()));
@@ -274,7 +274,7 @@ async fn nobody_else_can_accept_on_the_recipients_behalf() {
     until("delivered", || !b.friends.view().incoming.is_empty()).await;
     let id = a.friends.relation(&b.id()).unwrap().id();
 
-    let payload = serde_json::to_vec(&FriendMsg::Accept { id }).unwrap();
+    let payload = serde_json::to_vec(&FriendMsg::Accept { id, name: String::new() }).unwrap();
     let reply = raw_call(&c.endpoint, a.id(), &payload).await;
     assert_eq!(reply, Some(FriendReply::Unknown));
     assert!(!a.friends.is_friend(&b.id()) && !a.friends.is_friend(&c.id()));
