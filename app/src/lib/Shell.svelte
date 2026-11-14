@@ -1,7 +1,10 @@
 <script lang="ts">
   import { view as screen } from "./fullscreen.svelte";
+  import Friends from "./Friends.svelte";
+  import { friends } from "./friendlist.svelte";
   import Home from "./Home.svelte";
   import { nav } from "./nav.svelte";
+  import Rings from "./Rings.svelte";
   import Room from "./Room.svelte";
   import Servers from "./Servers.svelte";
   import Settings from "./Settings.svelte";
@@ -16,7 +19,7 @@
 
 <div class="shell" class:bare={screen.fullscreen}>
   {#if !screen.fullscreen}
-    <Sidebar {snapshot} />
+    <Sidebar {snapshot} requests={friends.view?.incoming.length ?? 0} />
   {/if}
   <section class="content">
     {#if nav.view === "home"}
@@ -26,7 +29,7 @@
         <Home {snapshot} />
       {/if}
     {:else if nav.view === "friends"}
-      <div class="soon"><h1>Friends</h1></div>
+      <Friends {snapshot} />
     {:else if nav.view === "servers"}
       <Servers />
     {:else}
@@ -34,6 +37,8 @@
     {/if}
   </section>
 </div>
+
+<Rings {snapshot} />
 
 <style>
   .shell {
@@ -50,9 +55,5 @@
     min-width: 0;
     height: 100%;
     overflow: auto;
-  }
-
-  .soon {
-    padding: 32px 24px;
   }
 </style>
