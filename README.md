@@ -52,6 +52,21 @@ to build from a checkout, and `--uninstall`/`-Uninstall`.
 - **Join a room** takes either kind of code.
 - When the host leaves, the room ends for everyone.
 
+### Friends
+
+- Your **Noxid ID** is in your profile (bottom left). It is the same identity
+  as your room code, so share it with people you'd let knock.
+- **Add friend** with someone's ID sends a request. You're friends once they
+  accept; until then it shows as sent, and whether it has reached them.
+- There is no server holding requests: a request (or a removal) reaches the
+  other person the next time you're both online, and Noxid keeps retrying
+  until then.
+- **Call** rings a friend into your room (starting one if you're in none).
+  They have 20 seconds to pick up. Once they're in, it's an ordinary room:
+  others can still knock with the room code or use an invite.
+- Being friends lets nobody into a room on its own: only the host's own
+  invite, carried by a ring, does.
+
 ## Build from source
 
 You need Rust 1.91 or newer and [Bun](https://bun.sh) 1.4 or newer. The
@@ -79,7 +94,7 @@ bun run tauri build    # build installers into target/release/bundle
 
 | Path | What it is |
 |---|---|
-| `crates/noxid-core` | Identity, rooms and invites, the mesh, media. No UI |
+| `crates/noxid-core` | Identity, rooms and invites, friends, the mesh, media. No UI |
 | `crates/noxid-cli` | A development harness that drives the core from a terminal |
 | `app` | The Tauri app: Rust shell in `src-tauri`, Svelte frontend in `src` |
 | `scripts` | Install scripts |
