@@ -3,6 +3,7 @@
   import { setMic } from "./controls";
   import { friends } from "./friendlist.svelte";
   import { showToast } from "./toast.svelte";
+  import Confirm from "./Confirm.svelte";
   import Menu from "./Menu.svelte";
   import type { AudioStream, MemberView } from "./types";
 
@@ -56,6 +57,21 @@
     }
   }
 
+  // Removing a friend asks first, in a modal of its own; the menu steps
+  // aside meanwhile so a click on the modal does not count as outside it.
+  let confirmingUnfriend = $state(false);
+
+  async function unfriend() {
+    confirmingUnfriend = false;
+    onclose();
+    try {
+      await api.removeFriend(member.id);
+      showToast(`${member.name} is no longer your friend.`);
+    } catch (e) {
+      showToast(String(e));
+    }
+  }
+
   let confirmingRemove = $state(false);
 
   async function remove() {
@@ -68,6 +84,16 @@
   }
 </script>
 
+{#if confirmingUnfriend}
+  <Confirm
+    question={`Remove ${member.name} as a friend?`}
+    detail="You'll stop being friends on both sides as soon as they're told. To be friends again, one of you sends a new request."
+    confirm="Remove friend"
+    cancel="Keep"
+    onconfirm={unfriend}
+    oncancel={onclose}
+  />
+{:else}
 <Menu label={member.name} {x} {y} {onclose}>
   <p class="who">{member.name}{#if member.is_self}<span> (you)</span>{/if}</p>
 
@@ -111,7 +137,7 @@
     {:else if friendship === "finishing"}
       <button class="item" disabled>Becoming friends…</button>
     {:else if friendship === "friends"}
-      <button class="item" disabled>Friends</button>
+      <button class="item unfriend" onclick={() => (confirmingUnfriend = true)}>Remove friend</button>
     {/if}
 
     {#if member.has_screen_audio}
@@ -146,3 +172,17 @@
     {/if}
   {/if}
 </Menu>
+{/if}
+
+<style>
+  /* A warning, not just a red word: it ends something on both sides. */
+  .item.unfriend {
+    margin-top: 2px;
+    background: rgb(220 54 65 / 0.14);
+    color: #f07a82;
+  }
+
+  .item.unfriend:hover:not(:disabled) {
+    background: rgb(220 54 65 / 0.26);
+  }
+</style>
