@@ -12,9 +12,12 @@ import type {
   Levels,
   Frame,
   FrameSocket,
+  FriendsView,
+  LeaveMode,
   Notice,
   Quality,
   QualityMode,
+  RingOutcome,
   Snapshot,
 } from "./types";
 
@@ -24,7 +27,8 @@ export const api = {
   createRoom: (name: string | null) => invoke<void>("create_room", { name }),
   invite: () => invoke<string>("invite"),
   joinRoom: (code: string) => invoke<void>("join_room", { code }),
-  leaveRoom: () => invoke<void>("leave_room"),
+  /** For the host, `mode` says whether the room carries on (the default). */
+  leaveRoom: (mode: LeaveMode = "hand_over") => invoke<void>("leave_room", { mode }),
   kick: (id: string) => invoke<void>("kick", { id }),
   answerKnock: (id: string, approve: boolean) => invoke<void>("answer_knock", { id, approve }),
   setMic: (on: boolean) => invoke<void>("set_mic", { on }),
@@ -64,6 +68,21 @@ export const api = {
   setDeafened: (on: boolean) => invoke<void>("set_deafened", { on }),
   setPeerAudio: (id: string, stream: AudioStream, volume: number, muted: boolean) =>
     invoke<void>("set_peer_audio", { id, stream, volume, muted }),
+  friends: () => invoke<FriendsView>("friends"),
+  /** Checks a pasted Noxid ID; resolves to its canonical form. */
+  checkFriendId: (text: string) => invoke<string>("check_friend_id", { text }),
+  sendFriendRequest: (id: string) => invoke<void>("send_friend_request", { id }),
+  answerFriendRequest: (id: string, accept: boolean) => invoke<void>("answer_friend_request", { id, accept }),
+  cancelFriendRequest: (id: string) => invoke<void>("cancel_friend_request", { id }),
+  removeFriend: (id: string) => invoke<void>("remove_friend", { id }),
+  retryFriendRequest: (id: string) => invoke<void>("retry_friend_request", { id }),
+  /** Rings a friend into our room (starting one if needed); resolves when
+   *  they answer, decline, miss it, or we hang up. */
+  callFriend: (id: string) => invoke<RingOutcome>("call_friend", { id }),
+  hangUp: () => invoke<void>("hang_up"),
+  /** Answers a ring; yes joins their room. */
+  answerRing: (id: string, accept: boolean) => invoke<void>("answer_ring", { id, accept }),
+  dismissMissedCalls: () => invoke<void>("dismiss_missed_calls"),
 };
 
 export const onSnapshot = (handler: (s: Snapshot) => void): Promise<UnlistenFn> =>
@@ -71,6 +90,9 @@ export const onSnapshot = (handler: (s: Snapshot) => void): Promise<UnlistenFn> 
 
 export const onNotice = (handler: (n: Notice) => void): Promise<UnlistenFn> =>
   listen<Notice>("notice", (e) => handler(e.payload));
+
+export const onFriends = (handler: (f: FriendsView) => void): Promise<UnlistenFn> =>
+  listen<FriendsView>("friends", (e) => handler(e.payload));
 
 export const onLevels = (handler: (l: Levels) => void): Promise<UnlistenFn> =>
   listen<Levels>("levels", (e) => handler(e.payload));

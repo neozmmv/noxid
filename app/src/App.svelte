@@ -1,17 +1,17 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, onSnapshot, onNotice, onLevels, connectFrames } from "./lib/api";
+  import { api, onSnapshot, onNotice, onLevels, onFriends, connectFrames } from "./lib/api";
+  import { friends } from "./lib/friendlist.svelte";
+  import { showToast, toast } from "./lib/toast.svelte";
   import { voice } from "./lib/levels.svelte";
   import type { Notice, Snapshot } from "./lib/types";
-  import Lobby from "./lib/Lobby.svelte";
-  import Room from "./lib/Room.svelte";
+  import Shell from "./lib/Shell.svelte";
   import Titlebar from "./lib/Titlebar.svelte";
 
   let snapshot = $state<Snapshot | null>(null);
-  let notice = $state<string | null>(null);
   let startError = $state<string | null>(null);
 
-  function describe(n: Notice): string {
+  function describe(n: Notice): string | null {
     switch (n.kind) {
       case "kicked":
         return "The host removed you from the room.";
@@ -19,15 +19,30 @@
         return "The host ended the room.";
       case "error":
         return n.message;
+      case "now_host":
+        return "The host left. You're the host now, with a new room code.";
+      case "host_changed":
+        return `The host left. ${n.message} is the host now.`;
+      case "friend":
+        switch (n.message.kind) {
+          case "request_received":
+            return `${n.message.name} sent you a friend request.`;
+          case "friend_added":
+            return `You and ${n.message.name} are now friends.`;
+          case "request_declined":
+            return `${n.message.name} declined your friend request.`;
+          case "missed_call":
+            return `Missed call from ${n.message.name}.`;
+          case "ringing":
+            // The ringing card says it.
+            return null;
+        }
     }
   }
 
-  let noticeTimer: ReturnType<typeof setTimeout> | undefined;
-
   function showNotice(n: Notice) {
-    notice = describe(n);
-    clearTimeout(noticeTimer);
-    noticeTimer = setTimeout(() => (notice = null), 6000);
+    const message = describe(n);
+    if (message) showToast(message);
   }
 
   onMount(() => {
@@ -35,11 +50,16 @@
       onSnapshot((s) => (snapshot = s)),
       onNotice(showNotice),
       onLevels((l) => (voice.levels = l)),
+      onFriends((f) => (friends.view = f)),
     ];
     api
       .snapshot()
       .then((s) => (snapshot = s))
       .catch((e) => (startError = String(e)));
+    api
+      .friends()
+      .then((f) => (friends.view ??= f))
+      .catch(() => {});
     connectFrames();
     return () => unlisten.forEach((p) => p.then((f) => f()));
   });
@@ -57,14 +77,12 @@
       <div class="pulse" aria-hidden="true"></div>
       <p>Finding the network…</p>
     </section>
-  {:else if snapshot.room}
-    <Room {snapshot} />
   {:else}
-    <Lobby {snapshot} />
+    <Shell {snapshot} />
   {/if}
 
-  {#if notice}
-    <div class="notice" role="status">{notice}</div>
+  {#if toast.message}
+    <div class="notice" role="status">{toast.message}</div>
   {/if}
 </main>
 
@@ -72,7 +90,7 @@
   /* Below the titlebar, which stays put while the page scrolls. */
   main {
     height: calc(100% - 34px);
-    overflow: auto;
+    overflow: hidden;
   }
 
   .status {

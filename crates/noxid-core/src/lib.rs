@@ -8,6 +8,7 @@ pub mod audio;
 #[cfg(windows)]
 mod dshow;
 pub mod files;
+pub mod friends;
 mod gate;
 pub mod identity;
 pub mod log;
@@ -15,13 +16,14 @@ pub mod media;
 mod mesh;
 mod node;
 pub mod room;
+mod rpc;
 #[cfg(windows)]
 mod still;
 #[cfg(windows)]
 mod wgc;
 
 pub use node::{
-    KnockView, MAX_SCREEN_VOLUME, MAX_VOLUME, MemberView, Node, NodeConfig, Notice, PeerAudio, PeerView, QualityMode,
+    KnockView, LeaveMode, MAX_SCREEN_VOLUME, MAX_VOLUME, MemberView, Node, NodeConfig, Notice, PeerAudio, PeerView, QualityMode,
     RoomView, Snapshot, Stream,
 };
 

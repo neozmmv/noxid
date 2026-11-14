@@ -1,7 +1,9 @@
 // A label that rises above a control after the pointer rests on it. One
 // element serves every control, so there is never more than one on screen.
 
-export type TooltipOptions = string | { label: string; key?: string };
+/** `side: "right"` opens the label beside the control rather than above it,
+ *  for the navigation rail, where above would cover the titlebar. */
+export type TooltipOptions = string | { label: string; key?: string; side?: "right" };
 
 const DELAY = 450;
 // Moving from one control to its neighbour within this window skips the
@@ -35,9 +37,23 @@ function fill(el: HTMLDivElement, options: TooltipOptions) {
   }
 }
 
-function place(el: HTMLDivElement, anchor: HTMLElement) {
+function sideOf(options: TooltipOptions): "right" | undefined {
+  return typeof options === "string" ? undefined : options.side;
+}
+
+function placeRight(el: HTMLDivElement, a: DOMRect, t: DOMRect) {
+  const middle = a.top + a.height / 2;
+  const top = Math.min(Math.max(middle - t.height / 2, EDGE), window.innerHeight - t.height - EDGE);
+  el.style.top = `${top}px`;
+  el.style.left = `${a.right + GAP}px`;
+  el.style.setProperty("--notch-y", `${middle - top}px`);
+  el.dataset.side = "right";
+}
+
+function place(el: HTMLDivElement, anchor: HTMLElement, side?: "right") {
   const a = anchor.getBoundingClientRect();
   const t = el.getBoundingClientRect();
+  if (side === "right") return placeRight(el, a, t);
   const below = a.top - t.height - GAP < EDGE;
   const top = below ? a.bottom + GAP : a.top - t.height - GAP;
   const centre = a.left + a.width / 2;
@@ -56,7 +72,7 @@ function show(anchor: HTMLElement, options: TooltipOptions) {
   owner = anchor;
   fill(el, options);
   el.classList.remove("shown");
-  place(el, anchor);
+  place(el, anchor, sideOf(options));
   // Next frame, so the rise starts from its resting offset.
   requestAnimationFrame(() => owner === anchor && el.classList.add("shown"));
   warm = true;
@@ -96,7 +112,7 @@ export function tooltip(node: HTMLElement, initial: TooltipOptions) {
       // A toggle's label changes under the pointer; keep it truthful.
       if (owner === node && tip) {
         fill(tip, options);
-        place(tip, node);
+        place(tip, node, sideOf(options));
       }
     },
     destroy() {

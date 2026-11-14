@@ -157,7 +157,13 @@ pub struct Room {
     pub coordinator_id: Option<String>,
     /// Set only on the coordinator; see the module docs.
     room_id: Option<String>,
+    /// In joining order: the host first, then everyone in the order they were
+    /// let in. Every member's copy is in the host's order, so all agree on who
+    /// is next to host (see [`Room::next_coordinator`]).
     members: Vec<Member>,
+    /// The host before the current one, after a hand-off, so the same
+    /// hand-off arriving again is recognized.
+    previous_coordinator: Option<String>,
     pending_invites: HashMap<[u8; 16], PendingInvite>,
     redeemed: HashMap<[u8; 16], Redeemed>,
 }
@@ -387,11 +393,51 @@ impl Room {
         self.members.iter().any(|m| m.id == id)
     }
 
-    /// The roster, ordered so every member sees the same list.
+    /// The roster in joining order, which every member sees the same way.
     pub fn roster(&self) -> Vec<Member> {
-        let mut roster = self.members.clone();
-        roster.sort_by(|a, b| a.id.cmp(&b.id));
-        roster
+        self.members.clone()
+    }
+
+    /// Who hosts if the host leaves: the first to have joined after it.
+    pub fn next_coordinator(&self) -> Option<String> {
+        let coordinator = self.coordinator_id.as_deref()?;
+        self.members
+            .iter()
+            .find(|m| m.id != coordinator)
+            .map(|m| m.id.clone())
+    }
+
+    /// Takes over the room the host handed us: we admit people from now on,
+    /// under a new `room_id`, so nothing the old host minted lets anyone in.
+    pub fn promote(&mut self, own_id: &str, own_name: &str, name: Option<String>, roster: Vec<Member>) {
+        self.previous_coordinator = self.coordinator_id.take();
+        self.coordinator_id = Some(own_id.to_string());
+        self.room_id = Some(new_room_id());
+        self.pending_invites.clear();
+        self.redeemed.clear();
+        if name.is_some() {
+            self.name = name;
+        }
+        self.apply_roster(own_id, own_name, roster);
+    }
+
+    /// Follows the room to its new host, `successor`.
+    pub fn hand_over(&mut self, successor: &str, own_id: &str, own_name: &str, name: Option<String>, roster: Vec<Member>) {
+        self.previous_coordinator = self.coordinator_id.replace(successor.to_string());
+        if name.is_some() {
+            self.name = name;
+        }
+        self.apply_roster(own_id, own_name, roster);
+    }
+
+    /// Whether a hand-off from `requester` to `successor` is one to follow:
+    /// it comes from the host, or it is the hand-off we already followed,
+    /// arriving again.
+    pub fn accepts_hand_over(&self, requester: &str, successor: &str) -> bool {
+        let from_host = self.coordinator_id.as_deref() == Some(requester);
+        let again = self.previous_coordinator.as_deref() == Some(requester)
+            && self.coordinator_id.as_deref() == Some(successor);
+        from_host || again
     }
 
     /// The roster as endpoint ids, skipping any entry that does not parse.
@@ -649,5 +695,96 @@ mod tests {
         assert!(!room.is_active());
         assert!(room.roster().is_empty());
         assert!(!room.redeem_invite(&token, &id(9), "x", minted_at()));
+    }
+
+    // ------------------------------------------------------------ hand-off
+
+    fn host_with(members: &[u8]) -> Room {
+        let mut room = Room::default();
+        room.create(Some("room".into()), &id(1), "host");
+        for n in members {
+            room.admit(&id(*n), &format!("m{n}"));
+        }
+        room
+    }
+
+    fn ids(room: &Room) -> Vec<String> {
+        room.roster().into_iter().map(|m| m.id).collect()
+    }
+
+    #[test]
+    fn the_roster_keeps_joining_order() {
+        let room = host_with(&[3, 2]);
+        assert_eq!(ids(&room), vec![id(1), id(3), id(2)]);
+    }
+
+    #[test]
+    fn a_members_copy_keeps_the_hosts_order() {
+        let host = host_with(&[3, 2]);
+        let mut member = Room::default();
+        member.set_joined(&id(1), &id(2), "m2", None, host.roster());
+        assert_eq!(ids(&member), ids(&host));
+    }
+
+    #[test]
+    fn the_next_host_is_the_first_to_have_joined() {
+        let host = host_with(&[3, 2]);
+        assert_eq!(host.next_coordinator(), Some(id(3)));
+        let mut member = Room::default();
+        member.set_joined(&id(1), &id(2), "m2", None, host.roster());
+        assert_eq!(member.next_coordinator(), Some(id(3)));
+    }
+
+    #[test]
+    fn being_handed_the_room_makes_us_its_host() {
+        let host = host_with(&[2, 3]);
+        let mut member = Room::default();
+        member.set_joined(&id(1), &id(2), "m2", Some("room".into()), host.roster());
+        let rest: Vec<Member> = host.roster().into_iter().filter(|m| m.id != id(1)).collect();
+
+        member.promote(&id(2), "m2", Some("room".into()), rest);
+
+        assert!(member.is_coordinator(&id(2)));
+        assert_eq!(ids(&member), vec![id(2), id(3)]);
+        assert_eq!(member.name.as_deref(), Some("room"));
+        assert!(member.generate_invite(key(2), DEFAULT_INVITE_TTL, minted_at()).is_ok());
+    }
+
+    #[test]
+    fn the_old_hosts_invites_do_not_work_for_the_new_one() {
+        let mut host = host_with(&[2]);
+        let (code, _) = host.generate_invite(key(1), DEFAULT_INVITE_TTL, minted_at()).unwrap();
+        let mut member = Room::default();
+        member.set_joined(&id(1), &id(2), "m2", None, host.roster());
+        member.promote(&id(2), "m2", None, vec![Member::new(id(2), "m2")]);
+        assert!(!member.redeem_invite(&token_of(&code), &id(5), "x", minted_at()));
+    }
+
+    #[test]
+    fn the_others_follow_the_new_host() {
+        let host = host_with(&[2, 3]);
+        let mut member = Room::default();
+        member.set_joined(&id(1), &id(3), "m3", None, host.roster());
+        let rest: Vec<Member> = host.roster().into_iter().filter(|m| m.id != id(1)).collect();
+
+        member.hand_over(&id(2), &id(3), "m3", None, rest);
+
+        assert_eq!(member.coordinator_id, Some(id(2)));
+        assert!(!member.is_coordinator(&id(3)));
+        assert_eq!(ids(&member), vec![id(2), id(3)]);
+        assert!(!member.is_member(&id(1)), "the old host is gone");
+    }
+
+    #[test]
+    fn a_hand_off_is_taken_only_from_the_host_and_repeats_are_harmless() {
+        let host = host_with(&[2, 3]);
+        let mut member = Room::default();
+        member.set_joined(&id(1), &id(3), "m3", None, host.roster());
+        assert!(!member.accepts_hand_over(&id(2), &id(2)), "only the host hands the room over");
+        assert!(member.accepts_hand_over(&id(1), &id(2)));
+        let rest: Vec<Member> = host.roster().into_iter().filter(|m| m.id != id(1)).collect();
+        member.hand_over(&id(2), &id(3), "m3", None, rest);
+        assert!(member.accepts_hand_over(&id(1), &id(2)), "the same hand-off again");
+        assert!(!member.accepts_hand_over(&id(1), &id(3)), "but not a different one");
     }
 }

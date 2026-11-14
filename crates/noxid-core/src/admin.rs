@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use crate::node::{Inner, Notice};
+use crate::rpc;
 use crate::room::{Code, Member};
 
 pub const ADMIN_ALPN: &[u8] = b"noxid-admin/0";
@@ -40,6 +41,16 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(10);
 /// which in Quix waited until that member happened to link with the
 /// coordinator again.
 const ROSTER_HEARTBEAT: Duration = Duration::from_secs(20);
+
+/// How long the host's silence must last before members accept a roster from
+/// the next in line, having missed the hand-off itself: two missed heartbeats.
+pub const HOST_SILENCE: Duration = Duration::from_secs(2 * 20);
+
+/// How long a host leaving spends handing the room over, in all: it runs on
+/// the way out of the app, which must stay quick.
+const HAND_OVER_BUDGET: Duration = Duration::from_secs(8);
+/// How long one candidate successor gets to take the room.
+const HAND_OVER_STEP: Duration = Duration::from_secs(3);
 
 /// Attempts at reaching the coordinator with an invite. Safe to retry now that
 /// redeeming is idempotent for the same requester.
@@ -75,6 +86,14 @@ pub enum AdminRequest {
     Kicked,
     /// Coordinator to member: the room is over.
     Closed,
+    /// Coordinator to member, on leaving: `successor` hosts from now on, with
+    /// `members` (in joining order, the old host left out). Sent to the
+    /// successor first; older versions do not know it and are sent `Closed`.
+    Handover {
+        successor: String,
+        room_name: Option<String>,
+        members: Vec<Member>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -109,43 +128,20 @@ impl std::fmt::Debug for AdminHandler {
 impl ProtocolHandler for AdminHandler {
     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
         let requester = connection.remote_id().to_string();
-
-        let request = tokio::time::timeout(REQUEST_TIMEOUT, async {
-            let (send, mut recv) = connection.accept_bi().await?;
-            let data = recv
-                .read_to_end(MAX_MESSAGE)
-                .await
-                .map_err(std::io::Error::other)?;
-            Ok::<_, AcceptError>((send, data))
-        })
-        .await;
-        let (mut send, data) = match request {
-            Ok(result) => result?,
-            Err(_) => {
-                connection.close(1u32.into(), b"request timed out");
-                return Ok(());
-            }
+        let (send, response) = match rpc::read_request(&connection, MAX_MESSAGE, REQUEST_TIMEOUT).await? {
+            rpc::Incoming::Request(send, request) => (send, self.dispatch(request, &requester).await),
+            rpc::Incoming::Malformed(send, message) => (send, error(message)),
+            rpc::Incoming::TimedOut => return Ok(()),
         };
-
-        let response = match serde_json::from_slice(&data) {
-            Ok(request) => self.dispatch(request, &requester).await,
-            Err(e) => error(format!("malformed request: {e}")),
-        };
-
-        let payload = serde_json::to_vec(&response).map_err(std::io::Error::other)?;
-        send.write_all(&payload)
-            .await
-            .map_err(std::io::Error::other)?;
-        send.finish()?;
-        // Give the reply a moment to reach the caller, who closes once it has
-        // read it; never wait on a peer that does not.
-        let _ = tokio::time::timeout(Duration::from_secs(5), connection.closed()).await;
-        Ok(())
+        rpc::reply(&connection, send, &response).await
     }
 }
 
 impl AdminHandler {
     async fn dispatch(&self, request: AdminRequest, requester: &str) -> AdminResponse {
+        if self.sent_by_coordinator(requester) {
+            self.inner.heard_from_host();
+        }
         match request {
             AdminRequest::Join {
                 token_hex,
@@ -159,7 +155,58 @@ impl AdminHandler {
             }
             AdminRequest::Kicked => self.removed(requester, Notice::Kicked).await,
             AdminRequest::Closed => self.removed(requester, Notice::RoomClosed).await,
+            AdminRequest::Handover {
+                successor,
+                room_name,
+                members,
+            } => self.handover(successor, room_name, members, requester),
         }
+    }
+
+    /// The host is leaving and hands the room on.
+    fn handover(
+        &self,
+        successor: String,
+        room_name: Option<String>,
+        members: Vec<Member>,
+        requester: &str,
+    ) -> AdminResponse {
+        let own_id = self.inner.own_id().to_string();
+        let name = self.inner.name();
+        let members: Vec<Member> = members.into_iter().filter(|m| m.id != requester).collect();
+        if !members.iter().any(|m| m.id == successor) {
+            return error("the new host must be in the room");
+        }
+        let notice = {
+            let mut room = self.inner.room.lock().unwrap();
+            if !room.accepts_hand_over(requester, &successor) {
+                return error("only the host can hand the room over");
+            }
+            if room.coordinator_id.as_deref() == Some(successor.as_str()) {
+                // The same hand-off again: already done.
+                return AdminResponse::Ack;
+            }
+            if successor == own_id {
+                room.promote(&own_id, &name, room_name, members);
+                room.set_avatar(&own_id, self.inner.own_avatar().as_deref());
+                Notice::NowHost
+            } else {
+                room.hand_over(&successor, &own_id, &name, room_name, members);
+                room.set_avatar(&own_id, self.inner.own_avatar().as_deref());
+                let new_host = room
+                    .roster()
+                    .into_iter()
+                    .find(|m| m.id == successor)
+                    .map(|m| m.name)
+                    .unwrap_or_default();
+                Notice::HostChanged(new_host)
+            }
+        };
+        info!(%requester, %successor, "the room was handed over");
+        self.inner.heard_from_host();
+        self.inner.roster_changed(None);
+        self.inner.notice(notice);
+        AdminResponse::Ack
     }
 
     fn is_coordinator(&self) -> bool {
@@ -271,12 +318,33 @@ impl AdminHandler {
 
     fn roster(&self, room_name: Option<String>, members: Vec<Member>, requester: &str) -> AdminResponse {
         // Only the coordinator rewrites our roster; otherwise anyone could add
-        // themselves to the room.
-        if !self.sent_by_coordinator(requester) || self.is_coordinator() {
+        // themselves to the room. One exception: the next in line, once the
+        // host has been silent long enough, is the host we missed being
+        // handed to.
+        if self.is_coordinator() {
             return error("only the coordinator can push a roster");
         }
         let own_id = self.inner.own_id().to_string();
         let name = self.inner.name();
+        if !self.sent_by_coordinator(requester) {
+            let next_in_line =
+                self.inner.room.lock().unwrap().next_coordinator().as_deref() == Some(requester);
+            if !next_in_line || self.inner.host_silent_for() < HOST_SILENCE {
+                return error("only the coordinator can push a roster");
+            }
+            let new_host = {
+                let mut room = self.inner.room.lock().unwrap();
+                room.hand_over(requester, &own_id, &name, room_name.clone(), members.clone());
+                room.roster()
+                    .into_iter()
+                    .find(|m| m.id == requester)
+                    .map(|m| m.name)
+                    .unwrap_or_default()
+            };
+            warn!(%requester, "the host went quiet; following the next in line");
+            self.inner.heard_from_host();
+            self.inner.notice(Notice::HostChanged(new_host));
+        }
         let changed = {
             let mut room = self.inner.room.lock().unwrap();
             let before = room.roster();
@@ -412,6 +480,90 @@ pub(crate) async fn join(
     }
 }
 
+/// Host, leaving: hands the room to the first of `others` (joining order)
+/// that takes it, then tells the rest who hosts now. Anyone who cannot take a
+/// hand-off (an older version) is told the room closed. If nobody takes it,
+/// everyone is told the room closed. Bounded by `HAND_OVER_BUDGET` in all.
+pub(crate) async fn hand_over(endpoint: &Endpoint, room_name: Option<String>, others: Vec<Member>) {
+    let deadline = tokio::time::Instant::now() + HAND_OVER_BUDGET;
+    let step = || HAND_OVER_STEP.min(deadline.saturating_duration_since(tokio::time::Instant::now()));
+    let mut remaining = others.clone();
+    let mut successor = None;
+    for candidate in &others {
+        if step().is_zero() {
+            break;
+        }
+        let Ok(to) = candidate.id.parse::<EndpointId>() else {
+            remaining.retain(|m| m.id != candidate.id);
+            continue;
+        };
+        let request = AdminRequest::Handover {
+            successor: candidate.id.clone(),
+            room_name: room_name.clone(),
+            members: remaining.clone(),
+        };
+        match expect_ack(call(endpoint, to, request, step()).await) {
+            Ok(()) => {
+                successor = Some(candidate.id.clone());
+                break;
+            }
+            Err(e) => {
+                // Unreachable, or too old to host: the next in line, then.
+                tracing::debug!(%to, "could not hand the room over: {e:#}");
+                remaining.retain(|m| m.id != candidate.id);
+            }
+        }
+    }
+
+    let Some(successor) = successor else {
+        info!("nobody could take the room; closing it");
+        let notices = others
+            .iter()
+            .filter_map(|m| m.id.parse::<EndpointId>().ok())
+            .map(|id| notify_closed(endpoint.clone(), id));
+        join_all_bounded(notices, step()).await;
+        return;
+    };
+    info!(%successor, "handed the room over");
+    let notices = remaining
+        .iter()
+        .filter(|m| m.id != successor)
+        .filter_map(|m| m.id.parse::<EndpointId>().ok())
+        .map(|to| {
+            let endpoint = endpoint.clone();
+            let request = AdminRequest::Handover {
+                successor: successor.clone(),
+                room_name: room_name.clone(),
+                members: remaining.clone(),
+            };
+            async move {
+                match call(&endpoint, to, request, NOTICE_TIMEOUT).await {
+                    Ok(AdminResponse::Ack) => {}
+                    // Reached, but cannot follow: an older version.
+                    Ok(_) => notify_closed(endpoint, to).await,
+                    // They follow the new host once we have been quiet for
+                    // HOST_SILENCE.
+                    Err(e) => tracing::debug!(%to, "hand-off notice failed: {e:#}"),
+                }
+            }
+        });
+    join_all_bounded(notices, step()).await;
+}
+
+/// Runs the futures together, giving up on them after `limit`.
+async fn join_all_bounded<F: std::future::Future<Output = ()> + Send + 'static>(
+    futures: impl Iterator<Item = F>,
+    limit: Duration,
+) {
+    let tasks: Vec<_> = futures.map(tokio::spawn).collect();
+    let _ = tokio::time::timeout(limit, async {
+        for task in tasks {
+            let _ = task.await;
+        }
+    })
+    .await;
+}
+
 pub(crate) async fn notify_leave(endpoint: &Endpoint, coordinator: EndpointId) -> Result<()> {
     expect_ack(call(endpoint, coordinator, AdminRequest::Leave, CALL_TIMEOUT).await)
 }
@@ -447,20 +599,5 @@ async fn call(
     request: AdminRequest,
     timeout: Duration,
 ) -> Result<AdminResponse> {
-    tokio::time::timeout(timeout, async {
-        let conn: Connection = endpoint.connect(to, ADMIN_ALPN).await.context("connect")?;
-        let (mut send, mut recv) = conn.open_bi().await.context("open stream")?;
-        send.write_all(&serde_json::to_vec(&request)?)
-            .await
-            .context("write")?;
-        send.finish().context("finish")?;
-        let data = recv
-            .read_to_end(MAX_MESSAGE)
-            .await
-            .context("read response")?;
-        conn.close(0u32.into(), b"done");
-        serde_json::from_slice(&data).context("parse response")
-    })
-    .await
-    .context("timed out")?
+    rpc::call(endpoint, to, ADMIN_ALPN, &request, MAX_MESSAGE, timeout).await
 }

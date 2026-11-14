@@ -1,6 +1,9 @@
 <script lang="ts">
   import { api } from "./api";
   import { setMic } from "./controls";
+  import { friends } from "./friendlist.svelte";
+  import { showToast } from "./toast.svelte";
+  import Confirm from "./Confirm.svelte";
   import Menu from "./Menu.svelte";
   import type { AudioStream, MemberView } from "./types";
 
@@ -27,6 +30,48 @@
 
   const percent = (gain: number) => Math.round(gain * 100);
 
+  // Where we stand with them as friends, from the list the backend sent.
+  // Their member id is their endpoint id, which is what a Noxid ID is.
+  const friendship = $derived.by(() => {
+    const view = friends.view;
+    if (!view || view.problem) return "unavailable";
+    const friend = view.friends.find((f) => f.id === member.id);
+    if (friend) return friend.finishing ? "finishing" : "friends";
+    if (view.incoming.some((r) => r.id === member.id)) return "incoming";
+    if (view.outgoing.some((r) => r.id === member.id)) return "outgoing";
+    return "none";
+  });
+
+  async function befriend() {
+    onclose();
+    try {
+      if (friendship === "incoming") {
+        await api.answerFriendRequest(member.id, true);
+        showToast(`Accepted ${member.name}'s friend request.`);
+      } else {
+        await api.sendFriendRequest(member.id);
+        showToast(`Friend request sent to ${member.name}. You'll be friends once they accept.`);
+      }
+    } catch (e) {
+      showToast(String(e));
+    }
+  }
+
+  // Removing a friend asks first, in a modal of its own; the menu steps
+  // aside meanwhile so a click on the modal does not count as outside it.
+  let confirmingUnfriend = $state(false);
+
+  async function unfriend() {
+    confirmingUnfriend = false;
+    onclose();
+    try {
+      await api.removeFriend(member.id);
+      showToast(`${member.name} is no longer your friend.`);
+    } catch (e) {
+      showToast(String(e));
+    }
+  }
+
   let confirmingRemove = $state(false);
 
   async function remove() {
@@ -39,6 +84,16 @@
   }
 </script>
 
+{#if confirmingUnfriend}
+  <Confirm
+    question={`Remove ${member.name} as a friend?`}
+    detail="You'll stop being friends on both sides as soon as they're told. To be friends again, one of you sends a new request."
+    confirm="Remove friend"
+    cancel="Keep"
+    onconfirm={unfriend}
+    oncancel={onclose}
+  />
+{:else}
 <Menu label={member.name} {x} {y} {onclose}>
   <p class="who">{member.name}{#if member.is_self}<span> (you)</span>{/if}</p>
 
@@ -73,6 +128,17 @@
     <button class="item" disabled={!member.connected} onclick={() => (onsendfile(), onclose())}>
       Send a file…
     </button>
+    {#if friendship === "none"}
+      <button class="item" onclick={befriend}>Add friend</button>
+    {:else if friendship === "incoming"}
+      <button class="item" onclick={befriend}>Accept friend request</button>
+    {:else if friendship === "outgoing"}
+      <button class="item" disabled>Friend request sent</button>
+    {:else if friendship === "finishing"}
+      <button class="item" disabled>Becoming friends…</button>
+    {:else if friendship === "friends"}
+      <button class="item unfriend" onclick={() => (confirmingUnfriend = true)}>Remove friend</button>
+    {/if}
 
     {#if member.has_screen_audio}
       <hr />
@@ -106,3 +172,17 @@
     {/if}
   {/if}
 </Menu>
+{/if}
+
+<style>
+  /* A warning, not just a red word: it ends something on both sides. */
+  .item.unfriend {
+    margin-top: 2px;
+    background: rgb(220 54 65 / 0.14);
+    color: #f07a82;
+  }
+
+  .item.unfriend:hover:not(:disabled) {
+    background: rgb(220 54 65 / 0.26);
+  }
+</style>

@@ -130,10 +130,100 @@ export interface AudioDevices {
 /** Voice level per endpoint id, 0 to 1. */
 export type Levels = Record<string, number>;
 
+export type FriendEvent =
+  | { kind: "request_received"; id: string; name: string }
+  | { kind: "friend_added"; id: string; name: string }
+  | { kind: "request_declined"; id: string; name: string }
+  | { kind: "ringing"; id: string; name: string }
+  | { kind: "missed_call"; id: string; name: string };
+
 export type Notice =
   | { kind: "kicked" }
   | { kind: "room_closed" }
-  | { kind: "error"; message: string };
+  | { kind: "error"; message: string }
+  /** The host left and handed us the room. */
+  | { kind: "now_host" }
+  /** The host left and handed the room to someone else. */
+  | { kind: "host_changed"; message: string }
+  | { kind: "friend"; message: FriendEvent };
+
+/** What a host leaving does: hand the room on, or end it for everyone. */
+export type LeaveMode = "hand_over" | "end";
+
+// Mirrors of noxid_core::friends::view. Times are unix milliseconds.
+
+/** Only what the backend has seen: `unknown` until it has tried. */
+export type Presence = "online" | "offline" | "unknown";
+
+export interface FriendView {
+  id: string;
+  /** What they call themselves: a label, not proof of anything. */
+  name: string;
+  alias: string | null;
+  presence: Presence;
+  last_seen: number | null;
+  /** We accepted and are waiting for them to confirm. */
+  finishing: boolean;
+  /** They answered without knowing of the friendship. */
+  unaware: boolean;
+}
+
+export interface IncomingView {
+  id: string;
+  /** The name sent with the request. */
+  name: string;
+  received_at: number;
+}
+
+export interface OutgoingView {
+  id: string;
+  name: string;
+  created_at: number;
+  /** When they confirmed they have it. */
+  delivered_at: number | null;
+  /** No longer retried on its own; Retry sends it again. */
+  stalled: boolean;
+  last_error: string | null;
+}
+
+export interface RingView {
+  id: string;
+  name: string;
+  room_name: string | null;
+  expires_at: number;
+}
+
+export interface CallingView {
+  id: string;
+  name: string;
+  since: number;
+}
+
+export interface MissedView {
+  id: string;
+  name: string;
+  at: number;
+}
+
+export interface FriendsView {
+  friends: FriendView[];
+  incoming: IncomingView[];
+  outgoing: OutgoingView[];
+  rings: RingView[];
+  calling: CallingView | null;
+  missed: MissedView[];
+  /** Why the list is read-only, if it is. */
+  problem: string | null;
+}
+
+export type RingOutcome =
+  | { outcome: "answered" }
+  | { outcome: "declined" }
+  | { outcome: "no_answer" }
+  | { outcome: "hung_up" }
+  | { outcome: "busy" }
+  | { outcome: "not_friends" }
+  | { outcome: "unreachable"; message: string };
 
 export interface DisplayInfo {
   id: string;

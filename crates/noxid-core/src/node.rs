@@ -22,6 +22,7 @@ use tracing::{info, warn};
 use crate::admin::{self, ADMIN_ALPN, AdminHandler};
 use crate::avatar::{self, AVATAR_ALPN, AvatarHandler, Avatars};
 use crate::files::{self, FILES_ALPN, FilesHandler, TransferView, Transfers};
+use crate::friends::{self, FriendEvent, Friends, FriendsConfig, RingOutcome, Timing};
 use crate::audio::{self, SystemAudio, Voice};
 use crate::gate::MemberGate;
 use crate::media::{self, CameraSource, Framerate, Mic, Outgoing, Quality, Screen};
@@ -30,6 +31,10 @@ use crate::room::{self, Code, Member, Room};
 /// How long a node waits for a relay at startup before carrying on. Until it
 /// has one, its address is not published and nobody can dial it.
 const ONLINE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How long the invite inside a ring stays redeemable: long enough to answer
+/// the ring and join, short enough that a leaked one soon stops working.
+const RING_INVITE_TTL: chrono::Duration = chrono::Duration::seconds(60);
 
 /// How many knocks may wait for an answer at once. Anyone holding the room code
 /// can knock, so this bounds what they can make the coordinator hold open.
@@ -53,6 +58,17 @@ pub enum QualityMode {
     Auto,
     /// Hold one rendition whatever the link does.
     Pinned(Quality),
+}
+
+/// What a host leaving does to the room.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LeaveMode {
+    /// The room carries on, hosted by the next in joining order.
+    #[default]
+    HandOver,
+    /// The room ends for everyone.
+    End,
 }
 
 /// Which of a participant's sounds a volume applies to.
@@ -190,6 +206,12 @@ pub enum Notice {
     Kicked,
     RoomClosed,
     Error(String),
+    /// The host left and handed us the room: we host now.
+    NowHost,
+    /// The host left and handed the room to someone else, named here.
+    HostChanged(String),
+    /// Something happened with a friend: a request, an acceptance, a ring.
+    Friend(FriendEvent),
 }
 
 /// What [`Node::spawn`] needs.
@@ -245,6 +267,10 @@ pub(crate) struct Inner {
     pub live: Live,
     pub mic: Mic,
     name: Mutex<String>,
+    /// The same name, for the friends list to send with requests and pings.
+    name_watch: watch::Sender<String>,
+    /// Friends, and the ALPN that keeps the list in step with them.
+    pub(crate) friends: Friends,
     /// Our profile picture's hash, if we have one.
     avatar: Mutex<Option<String>>,
     /// Copies of other members' pictures.
@@ -276,6 +302,8 @@ pub(crate) struct Inner {
     pub(crate) transfers: Transfers,
     /// The current roster's ids, which the mesh follows.
     pub roster_tx: watch::Sender<Vec<EndpointId>>,
+    /// When the host last spoke to us, for noticing it has gone quiet.
+    last_heard_host: Mutex<Instant>,
     /// Bumped on every change, so a frontend knows to read a new snapshot.
     changed: watch::Sender<u64>,
     notices: broadcast::Sender<Notice>,
@@ -310,12 +338,22 @@ impl Node {
         media::keep_portal_connection();
 
         let live = Live::builder(endpoint.clone()).spawn();
+        let name = room::display_name(&config.name, &id.to_string());
+        let (name_watch, name_rx) = watch::channel(name.clone());
+        let friends = Friends::spawn(FriendsConfig {
+            endpoint: endpoint.clone(),
+            store_path: crate::identity::state_dir()?.join("friends.json"),
+            name: name_rx,
+            timing: Timing::default(),
+        });
         let (roster_tx, roster_rx) = watch::channel(Vec::new());
         let inner = Arc::new(Inner {
             endpoint: endpoint.clone(),
             live: live.clone(),
             mic: config.mic,
-            name: Mutex::new(room::display_name(&config.name, &id.to_string())),
+            name: Mutex::new(name),
+            name_watch,
+            friends: friends.clone(),
             avatar: Mutex::new(avatar::load_own()),
             avatars: Mutex::new(Avatars::default()),
             room: Mutex::new(Room::default()),
@@ -347,6 +385,7 @@ impl Node {
             sensitivity: audio::Sensitivity::default(),
             transfers: Transfers::default(),
             roster_tx,
+            last_heard_host: Mutex::new(Instant::now()),
             changed: watch::channel(0).0,
             notices: broadcast::channel(16).0,
         });
@@ -371,7 +410,10 @@ impl Node {
                 AvatarHandler {
                     inner: inner.clone(),
                 },
-            );
+            )
+            // Not behind the member gate: friends are not room members, and
+            // being one lets nobody into a room or its media.
+            .accept(friends::wire::FRIENDS_ALPN, friends.handler());
         let gate = MemberGate {
             inner: inner.clone(),
             moq: live.protocol_handler(),
@@ -384,6 +426,7 @@ impl Node {
         tokio::spawn(crate::mesh::run(inner.clone(), roster_rx));
         tokio::spawn(admin::roster_heartbeat(inner.clone()));
         tokio::spawn(avatar::run(inner.clone()));
+        tokio::spawn(forward_friend_events(inner.clone()));
 
         match tokio::time::timeout(ONLINE_TIMEOUT, endpoint.online()).await {
             Ok(()) => info!("online"),
@@ -436,6 +479,7 @@ impl Node {
     pub fn set_name(&self, name: &str) {
         let name = room::display_name(name, &self.id().to_string());
         *self.inner.name.lock().unwrap() = name.clone();
+        self.inner.name_watch.send_replace(name.clone());
         let own_id = self.id().to_string();
         let mut room = self.inner.room.lock().unwrap();
         // The coordinator can rename itself in place; a member's new name
@@ -537,28 +581,41 @@ impl Node {
         Ok(())
     }
 
-    /// Leaves the room. A coordinator leaving closes the room for everyone,
-    /// since nobody else could admit anyone or keep the roster.
+    /// Leaves the room. A host leaving hands it to the next in joining order;
+    /// see [`leave_with`](Self::leave_with) to end it for everyone instead.
     pub async fn leave(&self) {
-        let (coordinator, roster, own_id) = {
+        self.leave_with(LeaveMode::HandOver).await;
+    }
+
+    /// Leaves the room. For the host, `mode` says whether the room carries on
+    /// under the next in joining order, or ends for everyone.
+    pub async fn leave_with(&self, mode: LeaveMode) {
+        // A ring into the room we are leaving would admit nobody.
+        self.inner.friends.hang_up();
+        let own_id = self.id().to_string();
+        let (coordinator, room_name, others) = {
             let room = self.inner.room.lock().unwrap();
             if !room.is_active() {
                 return;
             }
-            (
-                room.coordinator_id.clone(),
-                room.member_ids(),
-                self.id().to_string(),
-            )
+            let others: Vec<Member> = room.roster().into_iter().filter(|m| m.id != own_id).collect();
+            (room.coordinator_id.clone(), room.name.clone(), others)
         };
 
         let endpoint = &self.inner.endpoint;
         if coordinator.as_deref() == Some(own_id.as_str()) {
-            let notices = roster
-                .into_iter()
-                .filter(|id| *id != self.id())
-                .map(|id| admin::notify_closed(endpoint.clone(), id));
-            join_all(notices).await;
+            match mode {
+                LeaveMode::HandOver if !others.is_empty() => {
+                    admin::hand_over(endpoint, room_name, others).await;
+                }
+                _ => {
+                    let notices = others
+                        .iter()
+                        .filter_map(|m| m.id.parse().ok())
+                        .map(|id| admin::notify_closed(endpoint.clone(), id));
+                    join_all(notices).await;
+                }
+            }
         } else if let Some(coordinator) = coordinator.and_then(|c| c.parse().ok())
             && let Err(e) = admin::notify_leave(endpoint, coordinator).await
         {
@@ -869,9 +926,57 @@ impl Node {
             .and_then(|b| b.preview())
     }
 
+    /// The friends list.
+    pub fn friends(&self) -> &Friends {
+        &self.inner.friends
+    }
+
+    /// Rings a friend into our room, starting one if we are in none. Only the
+    /// host can do this, since the ring carries an invite. Waits for the
+    /// outcome.
+    pub async fn call_friend(&self, peer: EndpointId) -> Result<RingOutcome> {
+        if !self.inner.friends.is_friend(&peer) {
+            anyhow::bail!("you can only call friends");
+        }
+        let own_id = self.id().to_string();
+        let (active, hosting) = {
+            let room = self.inner.room.lock().unwrap();
+            (room.is_active(), room.is_coordinator(&own_id))
+        };
+        if active && !hosting {
+            anyhow::bail!("only the host can call people into this room");
+        }
+        if !active {
+            self.create(None).await?;
+        }
+        let code = self.invite(Some(RING_INVITE_TTL))?;
+        let room_name = self.inner.room.lock().unwrap().name.clone();
+        self.inner.friends.ring(peer, code, room_name).await
+    }
+
+    /// Answers a friend ringing us; a yes joins their room, leaving ours.
+    pub async fn answer_ring(&self, peer: EndpointId, accept: bool) -> Result<()> {
+        if let Some(code) = self.inner.friends.answer_ring(peer, accept)? {
+            self.join(&code).await?;
+        }
+        Ok(())
+    }
+
     pub async fn shutdown(&self) {
         self.leave().await;
         self.inner.live.shutdown().await;
+    }
+}
+
+/// Passes friends' events on as notices, for as long as the node runs.
+async fn forward_friend_events(inner: Arc<Inner>) {
+    let mut events = inner.friends.events();
+    loop {
+        match events.recv().await {
+            Ok(event) => inner.notice(Notice::Friend(event)),
+            Err(broadcast::error::RecvError::Lagged(_)) => continue,
+            Err(broadcast::error::RecvError::Closed) => break,
+        }
     }
 }
 
@@ -995,6 +1100,14 @@ impl Inner {
 
     pub fn own_avatar(&self) -> Option<String> {
         self.avatar.lock().unwrap().clone()
+    }
+
+    pub fn heard_from_host(&self) {
+        *self.last_heard_host.lock().unwrap() = Instant::now();
+    }
+
+    pub fn host_silent_for(&self) -> Duration {
+        self.last_heard_host.lock().unwrap().elapsed()
     }
 
     pub fn notice(&self, notice: Notice) {

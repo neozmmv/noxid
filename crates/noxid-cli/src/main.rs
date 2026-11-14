@@ -8,7 +8,8 @@ use std::time::Duration;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use noxid_core::media::{self, Mic, Screen};
-use noxid_core::{Node, NodeConfig, Notice, QualityMode, Snapshot, Stream};
+use noxid_core::friends::{FriendsView, parse_friend_id};
+use noxid_core::{LeaveMode, Node, NodeConfig, Notice, QualityMode, Snapshot, Stream};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 #[derive(Parser)]
@@ -54,7 +55,8 @@ commands:
   approve <id|name>         let someone in who is knocking
   deny <id|name>            turn them away
   kick <id|name>            remove a member (host only)
-  leave                     leave the room (the host leaving closes it)
+  leave [end]               leave the room; a host hands it to the next to
+                            have joined, or with `end` closes it for everyone
   mic                       toggle the microphone
   share [display|test]      share a screen (index, id or name from `devices`)
   unshare                   stop sharing
@@ -68,6 +70,18 @@ commands:
   pcsound <on|off>          include the PC's sound when sharing
   volume <who> <voice|screen> <percent> [muted]   how loud you hear someone (voice up to 200, screen up to 100)
   status                    print the room
+  id                        print your Noxid ID (what friends add you by)
+  friends                   list friends, requests and rings
+  friend add <id>           send a friend request
+  friend accept <who>       accept a request (who: id, id prefix or name)
+  friend decline <who>      decline a request
+  friend cancel <who>       take back your request
+  friend remove <who>       end a friendship
+  friend retry <who>        try delivering to them now
+  friend call <who>         ring a friend into your room (starts one if needed)
+  friend hangup             stop ringing
+  friend pickup <who>       answer a friend ringing you
+  friend reject <who>       decline a ring
   quit";
 
 #[tokio::main]
@@ -163,6 +177,9 @@ async fn call(name: String, test_mic: bool, muted: bool, stats: bool) -> Result<
                         Notice::Kicked => println!("** you were removed from the room"),
                         Notice::RoomClosed => println!("** the host closed the room"),
                         Notice::Error(e) => println!("** {e}"),
+                        Notice::NowHost => println!("** the host left; you host the room now"),
+                        Notice::HostChanged(name) => println!("** the host left; {name} hosts the room now"),
+                        Notice::Friend(event) => println!("** friends: {event:?}"),
                     }
                 }
             }
@@ -205,7 +222,10 @@ async fn run_command(node: &Node, line: &str) -> Result<()> {
             node.answer_knock(&id, command == "approve")?;
         }
         "kick" => node.kick(rest).await?,
-        "leave" => node.leave().await,
+        "leave" => {
+            let mode = if rest == "end" { LeaveMode::End } else { LeaveMode::HandOver };
+            node.leave_with(mode).await;
+        }
         "mic" => node.set_mic(!node.snapshot().mic_on),
         "share" => {
             let screen = match rest {
@@ -263,9 +283,102 @@ async fn run_command(node: &Node, line: &str) -> Result<()> {
             let muted = parts.next() == Some("muted");
             node.set_peer_audio(member_id(node, who)?.parse()?, stream, volume, muted);
         }
+        "id" => println!("{}", node.id()),
+        "friends" => print_friends(&node.friends().view()),
+        "friend" => friend_command(node, rest).await?,
         other => println!("unknown command {other:?}; type `help`"),
     }
     Ok(())
+}
+
+async fn friend_command(node: &Node, line: &str) -> Result<()> {
+    let (command, who) = line.split_once(' ').unwrap_or((line, ""));
+    let who = who.trim();
+    let friends = node.friends();
+    match command {
+        "add" => {
+            friends.send_request(parse_friend_id(who, node.id())?).await?;
+            println!("request saved; it is delivered when you are both online");
+        }
+        "accept" => friends.answer(friend_peer(node, who)?, true).await?,
+        "decline" => friends.answer(friend_peer(node, who)?, false).await?,
+        "cancel" => friends.cancel(friend_peer(node, who)?).await?,
+        "remove" => friends.remove(friend_peer(node, who)?).await?,
+        "retry" => friends.retry(friend_peer(node, who)?),
+        "call" => {
+            let peer = friend_peer(node, who)?;
+            let node = node.clone();
+            // In the background, so `friend hangup` can still be typed.
+            tokio::spawn(async move {
+                match node.call_friend(peer).await {
+                    Ok(outcome) => println!("** call: {outcome:?}"),
+                    Err(e) => println!("** call failed: {e:#}"),
+                }
+            });
+        }
+        "hangup" => friends.hang_up(),
+        "pickup" => node.answer_ring(friend_peer(node, who)?, true).await?,
+        "reject" => node.answer_ring(friend_peer(node, who)?, false).await?,
+        other => anyhow::bail!("unknown friend command {other:?}; type `help`"),
+    }
+    Ok(())
+}
+
+/// Resolves someone on the friends list by id, id prefix or name, or reads
+/// a full Noxid ID.
+fn friend_peer(node: &Node, query: &str) -> Result<iroh::EndpointId> {
+    anyhow::ensure!(!query.is_empty(), "who?");
+    let view = node.friends().view();
+    let known = view
+        .friends
+        .iter()
+        .map(|f| (&f.id, &f.name))
+        .chain(view.incoming.iter().map(|r| (&r.id, &r.name)))
+        .chain(view.outgoing.iter().map(|r| (&r.id, &r.name)))
+        .chain(view.rings.iter().map(|r| (&r.id, &r.name)));
+    for (id, name) in known {
+        if id.starts_with(query) || name.eq_ignore_ascii_case(query) {
+            return Ok(id.parse()?);
+        }
+    }
+    parse_friend_id(query, node.id())
+}
+
+fn print_friends(view: &FriendsView) {
+    if let Some(problem) = &view.problem {
+        println!("  (read-only: {problem})");
+    }
+    for f in &view.friends {
+        let state = if f.finishing { "finishing".to_string() } else { format!("{:?}", f.presence).to_lowercase() };
+        println!("  friend    {} {} [{state}]", short(&f.id), f.name);
+    }
+    for r in &view.incoming {
+        println!("  incoming  {} {}", short(&r.id), r.name);
+    }
+    for r in &view.outgoing {
+        let state = match (&r.delivered_at, &r.last_error) {
+            (Some(_), _) => "delivered".to_string(),
+            (None, Some(e)) => format!("not delivered: {e}"),
+            (None, None) => "sending".to_string(),
+        };
+        println!("  outgoing  {} {} [{state}]", short(&r.id), r.name);
+    }
+    for r in &view.rings {
+        println!("  ringing   {} {}", short(&r.id), r.name);
+    }
+    if let Some(c) = &view.calling {
+        println!("  calling   {} {}", short(&c.id), c.name);
+    }
+    for m in &view.missed {
+        println!("  missed    {} {}", short(&m.id), m.name);
+    }
+    if view.friends.is_empty() && view.incoming.is_empty() && view.outgoing.is_empty() {
+        println!("  no friends yet; `id` prints yours to share");
+    }
+}
+
+fn short(id: &str) -> &str {
+    &id[..id.len().min(10)]
 }
 
 /// `default` (or nothing) means the system default device.
