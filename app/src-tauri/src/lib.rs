@@ -10,7 +10,7 @@ use iroh::EndpointId;
 use noxid_core::media::{self, Mic, Quality, Screen};
 use noxid_core::audio::AudioDevice;
 use noxid_core::friends::{FriendsView, RingOutcome, parse_friend_id};
-use noxid_core::{Node, NodeConfig, QualityMode, Snapshot, Stream};
+use noxid_core::{LeaveMode, Node, NodeConfig, QualityMode, Snapshot, Stream};
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager, RunEvent};
 use tokio::sync::watch;
@@ -225,9 +225,11 @@ async fn join_room(state: tauri::State<'_, AppState>, code: String) -> CommandRe
     node(&state).await?.join(&code).await.map_err(|e| format!("{e:#}"))
 }
 
+/// Leaves the room. For the host, `mode` says whether it carries on under the
+/// next to have joined (the default) or ends for everyone.
 #[tauri::command]
-async fn leave_room(state: tauri::State<'_, AppState>) -> CommandResult<()> {
-    node(&state).await?.leave().await;
+async fn leave_room(state: tauri::State<'_, AppState>, mode: Option<LeaveMode>) -> CommandResult<()> {
+    node(&state).await?.leave_with(mode.unwrap_or_default()).await;
     Ok(())
 }
 

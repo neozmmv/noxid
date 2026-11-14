@@ -60,6 +60,17 @@ pub enum QualityMode {
     Pinned(Quality),
 }
 
+/// What a host leaving does to the room.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LeaveMode {
+    /// The room carries on, hosted by the next in joining order.
+    #[default]
+    HandOver,
+    /// The room ends for everyone.
+    End,
+}
+
 /// Which of a participant's sounds a volume applies to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -195,6 +206,10 @@ pub enum Notice {
     Kicked,
     RoomClosed,
     Error(String),
+    /// The host left and handed us the room: we host now.
+    NowHost,
+    /// The host left and handed the room to someone else, named here.
+    HostChanged(String),
     /// Something happened with a friend: a request, an acceptance, a ring.
     Friend(FriendEvent),
 }
@@ -287,6 +302,8 @@ pub(crate) struct Inner {
     pub(crate) transfers: Transfers,
     /// The current roster's ids, which the mesh follows.
     pub roster_tx: watch::Sender<Vec<EndpointId>>,
+    /// When the host last spoke to us, for noticing it has gone quiet.
+    last_heard_host: Mutex<Instant>,
     /// Bumped on every change, so a frontend knows to read a new snapshot.
     changed: watch::Sender<u64>,
     notices: broadcast::Sender<Notice>,
@@ -368,6 +385,7 @@ impl Node {
             sensitivity: audio::Sensitivity::default(),
             transfers: Transfers::default(),
             roster_tx,
+            last_heard_host: Mutex::new(Instant::now()),
             changed: watch::channel(0).0,
             notices: broadcast::channel(16).0,
         });
@@ -563,30 +581,41 @@ impl Node {
         Ok(())
     }
 
-    /// Leaves the room. A coordinator leaving closes the room for everyone,
-    /// since nobody else could admit anyone or keep the roster.
+    /// Leaves the room. A host leaving hands it to the next in joining order;
+    /// see [`leave_with`](Self::leave_with) to end it for everyone instead.
     pub async fn leave(&self) {
+        self.leave_with(LeaveMode::HandOver).await;
+    }
+
+    /// Leaves the room. For the host, `mode` says whether the room carries on
+    /// under the next in joining order, or ends for everyone.
+    pub async fn leave_with(&self, mode: LeaveMode) {
         // A ring into the room we are leaving would admit nobody.
         self.inner.friends.hang_up();
-        let (coordinator, roster, own_id) = {
+        let own_id = self.id().to_string();
+        let (coordinator, room_name, others) = {
             let room = self.inner.room.lock().unwrap();
             if !room.is_active() {
                 return;
             }
-            (
-                room.coordinator_id.clone(),
-                room.member_ids(),
-                self.id().to_string(),
-            )
+            let others: Vec<Member> = room.roster().into_iter().filter(|m| m.id != own_id).collect();
+            (room.coordinator_id.clone(), room.name.clone(), others)
         };
 
         let endpoint = &self.inner.endpoint;
         if coordinator.as_deref() == Some(own_id.as_str()) {
-            let notices = roster
-                .into_iter()
-                .filter(|id| *id != self.id())
-                .map(|id| admin::notify_closed(endpoint.clone(), id));
-            join_all(notices).await;
+            match mode {
+                LeaveMode::HandOver if !others.is_empty() => {
+                    admin::hand_over(endpoint, room_name, others).await;
+                }
+                _ => {
+                    let notices = others
+                        .iter()
+                        .filter_map(|m| m.id.parse().ok())
+                        .map(|id| admin::notify_closed(endpoint.clone(), id));
+                    join_all(notices).await;
+                }
+            }
         } else if let Some(coordinator) = coordinator.and_then(|c| c.parse().ok())
             && let Err(e) = admin::notify_leave(endpoint, coordinator).await
         {
@@ -1071,6 +1100,14 @@ impl Inner {
 
     pub fn own_avatar(&self) -> Option<String> {
         self.avatar.lock().unwrap().clone()
+    }
+
+    pub fn heard_from_host(&self) {
+        *self.last_heard_host.lock().unwrap() = Instant::now();
+    }
+
+    pub fn host_silent_for(&self) -> Duration {
+        self.last_heard_host.lock().unwrap().elapsed()
     }
 
     pub fn notice(&self, notice: Notice) {

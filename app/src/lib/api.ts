@@ -13,6 +13,7 @@ import type {
   Frame,
   FrameSocket,
   FriendsView,
+  LeaveMode,
   Notice,
   Quality,
   QualityMode,
@@ -26,7 +27,8 @@ export const api = {
   createRoom: (name: string | null) => invoke<void>("create_room", { name }),
   invite: () => invoke<string>("invite"),
   joinRoom: (code: string) => invoke<void>("join_room", { code }),
-  leaveRoom: () => invoke<void>("leave_room"),
+  /** For the host, `mode` says whether the room carries on (the default). */
+  leaveRoom: (mode: LeaveMode = "hand_over") => invoke<void>("leave_room", { mode }),
   kick: (id: string) => invoke<void>("kick", { id }),
   answerKnock: (id: string, approve: boolean) => invoke<void>("answer_knock", { id, approve }),
   setMic: (on: boolean) => invoke<void>("set_mic", { on }),

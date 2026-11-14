@@ -19,6 +19,10 @@
         return "The host ended the room.";
       case "error":
         return n.message;
+      case "now_host":
+        return "The host left. You're the host now, with a new room code.";
+      case "host_changed":
+        return `The host left. ${n.message} is the host now.`;
       case "friend":
         switch (n.message.kind) {
           case "request_received":

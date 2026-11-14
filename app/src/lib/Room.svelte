@@ -16,7 +16,7 @@
   import Video from "@lucide/svelte/icons/video";
   import VideoOff from "@lucide/svelte/icons/video-off";
   import AudioSettings from "./AudioSettings.svelte";
-  import Confirm from "./Confirm.svelte";
+  import Dialog from "./Dialog.svelte";
   import Transfers from "./Transfers.svelte";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
   import { onMount } from "svelte";
@@ -258,6 +258,9 @@
   }
 
   let confirmingLeave = $state(false);
+  // Who hosts if we leave: the first to have joined after us. The roster is
+  // in joining order, the same on every member.
+  const successor = $derived(members.find((m) => !m.is_coordinator) ?? null);
 
   // The host leaving ends the room for everyone else, so that is asked first.
   function leave() {
@@ -541,17 +544,31 @@
 {/if}
 
 {#if confirmingLeave}
-  <Confirm
-    question="Are you sure you want to exit the session?"
-    detail="You are the host, so this ends the room for everyone."
-    confirm="End room"
-    cancel="Stay"
-    onconfirm={() => {
-      confirmingLeave = false;
-      api.leaveRoom();
-    }}
-    oncancel={() => (confirmingLeave = false)}
-  />
+  <!-- The host leaving: the room can carry on under the next to have joined,
+       or end for everyone. Stay comes first, so it has the focus. -->
+  <Dialog title="Leave the room?" onclose={() => (confirmingLeave = false)}>
+    <p class="leave-detail">
+      You're the host. If you leave, {successor?.name ?? "the next person"} becomes the host and the call carries
+      on without you; the room code changes. Or end it for everyone.
+    </p>
+    {#snippet actions()}
+      <button class="button quiet" onclick={() => (confirmingLeave = false)}>Stay</button>
+      <button
+        class="button danger"
+        onclick={() => {
+          confirmingLeave = false;
+          api.leaveRoom("end");
+        }}>End for everyone</button
+      >
+      <button
+        class="button primary"
+        onclick={() => {
+          confirmingLeave = false;
+          api.leaveRoom("hand_over");
+        }}>Leave, {successor?.name ?? "they"} hosts</button
+      >
+    {/snippet}
+  </Dialog>
 {/if}
 
 {#if showAudio}
@@ -819,6 +836,11 @@
 
   .spacer {
     flex: 1;
+  }
+
+  .leave-detail {
+    margin: 0;
+    color: var(--mist);
   }
 
 </style>

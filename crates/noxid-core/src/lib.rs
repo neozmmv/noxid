@@ -23,7 +23,7 @@ mod still;
 mod wgc;
 
 pub use node::{
-    KnockView, MAX_SCREEN_VOLUME, MAX_VOLUME, MemberView, Node, NodeConfig, Notice, PeerAudio, PeerView, QualityMode,
+    KnockView, LeaveMode, MAX_SCREEN_VOLUME, MAX_VOLUME, MemberView, Node, NodeConfig, Notice, PeerAudio, PeerView, QualityMode,
     RoomView, Snapshot, Stream,
 };
 

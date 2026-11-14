@@ -9,7 +9,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use noxid_core::media::{self, Mic, Screen};
 use noxid_core::friends::{FriendsView, parse_friend_id};
-use noxid_core::{Node, NodeConfig, Notice, QualityMode, Snapshot, Stream};
+use noxid_core::{LeaveMode, Node, NodeConfig, Notice, QualityMode, Snapshot, Stream};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 #[derive(Parser)]
@@ -55,7 +55,8 @@ commands:
   approve <id|name>         let someone in who is knocking
   deny <id|name>            turn them away
   kick <id|name>            remove a member (host only)
-  leave                     leave the room (the host leaving closes it)
+  leave [end]               leave the room; a host hands it to the next to
+                            have joined, or with `end` closes it for everyone
   mic                       toggle the microphone
   share [display|test]      share a screen (index, id or name from `devices`)
   unshare                   stop sharing
@@ -176,6 +177,8 @@ async fn call(name: String, test_mic: bool, muted: bool, stats: bool) -> Result<
                         Notice::Kicked => println!("** you were removed from the room"),
                         Notice::RoomClosed => println!("** the host closed the room"),
                         Notice::Error(e) => println!("** {e}"),
+                        Notice::NowHost => println!("** the host left; you host the room now"),
+                        Notice::HostChanged(name) => println!("** the host left; {name} hosts the room now"),
                         Notice::Friend(event) => println!("** friends: {event:?}"),
                     }
                 }
@@ -219,7 +222,10 @@ async fn run_command(node: &Node, line: &str) -> Result<()> {
             node.answer_knock(&id, command == "approve")?;
         }
         "kick" => node.kick(rest).await?,
-        "leave" => node.leave().await,
+        "leave" => {
+            let mode = if rest == "end" { LeaveMode::End } else { LeaveMode::HandOver };
+            node.leave_with(mode).await;
+        }
         "mic" => node.set_mic(!node.snapshot().mic_on),
         "share" => {
             let screen = match rest {

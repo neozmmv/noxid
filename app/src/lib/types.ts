@@ -141,7 +141,14 @@ export type Notice =
   | { kind: "kicked" }
   | { kind: "room_closed" }
   | { kind: "error"; message: string }
+  /** The host left and handed us the room. */
+  | { kind: "now_host" }
+  /** The host left and handed the room to someone else. */
+  | { kind: "host_changed"; message: string }
   | { kind: "friend"; message: FriendEvent };
+
+/** What a host leaving does: hand the room on, or end it for everyone. */
+export type LeaveMode = "hand_over" | "end";
 
 // Mirrors of noxid_core::friends::view. Times are unix milliseconds.
 

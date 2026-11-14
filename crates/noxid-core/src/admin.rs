@@ -42,6 +42,16 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(10);
 /// coordinator again.
 const ROSTER_HEARTBEAT: Duration = Duration::from_secs(20);
 
+/// How long the host's silence must last before members accept a roster from
+/// the next in line, having missed the hand-off itself: two missed heartbeats.
+pub const HOST_SILENCE: Duration = Duration::from_secs(2 * 20);
+
+/// How long a host leaving spends handing the room over, in all: it runs on
+/// the way out of the app, which must stay quick.
+const HAND_OVER_BUDGET: Duration = Duration::from_secs(8);
+/// How long one candidate successor gets to take the room.
+const HAND_OVER_STEP: Duration = Duration::from_secs(3);
+
 /// Attempts at reaching the coordinator with an invite. Safe to retry now that
 /// redeeming is idempotent for the same requester.
 const JOIN_ATTEMPTS: u32 = 3;
@@ -76,6 +86,14 @@ pub enum AdminRequest {
     Kicked,
     /// Coordinator to member: the room is over.
     Closed,
+    /// Coordinator to member, on leaving: `successor` hosts from now on, with
+    /// `members` (in joining order, the old host left out). Sent to the
+    /// successor first; older versions do not know it and are sent `Closed`.
+    Handover {
+        successor: String,
+        room_name: Option<String>,
+        members: Vec<Member>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -121,6 +139,9 @@ impl ProtocolHandler for AdminHandler {
 
 impl AdminHandler {
     async fn dispatch(&self, request: AdminRequest, requester: &str) -> AdminResponse {
+        if self.sent_by_coordinator(requester) {
+            self.inner.heard_from_host();
+        }
         match request {
             AdminRequest::Join {
                 token_hex,
@@ -134,7 +155,58 @@ impl AdminHandler {
             }
             AdminRequest::Kicked => self.removed(requester, Notice::Kicked).await,
             AdminRequest::Closed => self.removed(requester, Notice::RoomClosed).await,
+            AdminRequest::Handover {
+                successor,
+                room_name,
+                members,
+            } => self.handover(successor, room_name, members, requester),
         }
+    }
+
+    /// The host is leaving and hands the room on.
+    fn handover(
+        &self,
+        successor: String,
+        room_name: Option<String>,
+        members: Vec<Member>,
+        requester: &str,
+    ) -> AdminResponse {
+        let own_id = self.inner.own_id().to_string();
+        let name = self.inner.name();
+        let members: Vec<Member> = members.into_iter().filter(|m| m.id != requester).collect();
+        if !members.iter().any(|m| m.id == successor) {
+            return error("the new host must be in the room");
+        }
+        let notice = {
+            let mut room = self.inner.room.lock().unwrap();
+            if !room.accepts_hand_over(requester, &successor) {
+                return error("only the host can hand the room over");
+            }
+            if room.coordinator_id.as_deref() == Some(successor.as_str()) {
+                // The same hand-off again: already done.
+                return AdminResponse::Ack;
+            }
+            if successor == own_id {
+                room.promote(&own_id, &name, room_name, members);
+                room.set_avatar(&own_id, self.inner.own_avatar().as_deref());
+                Notice::NowHost
+            } else {
+                room.hand_over(&successor, &own_id, &name, room_name, members);
+                room.set_avatar(&own_id, self.inner.own_avatar().as_deref());
+                let new_host = room
+                    .roster()
+                    .into_iter()
+                    .find(|m| m.id == successor)
+                    .map(|m| m.name)
+                    .unwrap_or_default();
+                Notice::HostChanged(new_host)
+            }
+        };
+        info!(%requester, %successor, "the room was handed over");
+        self.inner.heard_from_host();
+        self.inner.roster_changed(None);
+        self.inner.notice(notice);
+        AdminResponse::Ack
     }
 
     fn is_coordinator(&self) -> bool {
@@ -246,12 +318,33 @@ impl AdminHandler {
 
     fn roster(&self, room_name: Option<String>, members: Vec<Member>, requester: &str) -> AdminResponse {
         // Only the coordinator rewrites our roster; otherwise anyone could add
-        // themselves to the room.
-        if !self.sent_by_coordinator(requester) || self.is_coordinator() {
+        // themselves to the room. One exception: the next in line, once the
+        // host has been silent long enough, is the host we missed being
+        // handed to.
+        if self.is_coordinator() {
             return error("only the coordinator can push a roster");
         }
         let own_id = self.inner.own_id().to_string();
         let name = self.inner.name();
+        if !self.sent_by_coordinator(requester) {
+            let next_in_line =
+                self.inner.room.lock().unwrap().next_coordinator().as_deref() == Some(requester);
+            if !next_in_line || self.inner.host_silent_for() < HOST_SILENCE {
+                return error("only the coordinator can push a roster");
+            }
+            let new_host = {
+                let mut room = self.inner.room.lock().unwrap();
+                room.hand_over(requester, &own_id, &name, room_name.clone(), members.clone());
+                room.roster()
+                    .into_iter()
+                    .find(|m| m.id == requester)
+                    .map(|m| m.name)
+                    .unwrap_or_default()
+            };
+            warn!(%requester, "the host went quiet; following the next in line");
+            self.inner.heard_from_host();
+            self.inner.notice(Notice::HostChanged(new_host));
+        }
         let changed = {
             let mut room = self.inner.room.lock().unwrap();
             let before = room.roster();
@@ -385,6 +478,90 @@ pub(crate) async fn join(
         }
         other => anyhow::bail!("unexpected response to join: {other:?}"),
     }
+}
+
+/// Host, leaving: hands the room to the first of `others` (joining order)
+/// that takes it, then tells the rest who hosts now. Anyone who cannot take a
+/// hand-off (an older version) is told the room closed. If nobody takes it,
+/// everyone is told the room closed. Bounded by `HAND_OVER_BUDGET` in all.
+pub(crate) async fn hand_over(endpoint: &Endpoint, room_name: Option<String>, others: Vec<Member>) {
+    let deadline = tokio::time::Instant::now() + HAND_OVER_BUDGET;
+    let step = || HAND_OVER_STEP.min(deadline.saturating_duration_since(tokio::time::Instant::now()));
+    let mut remaining = others.clone();
+    let mut successor = None;
+    for candidate in &others {
+        if step().is_zero() {
+            break;
+        }
+        let Ok(to) = candidate.id.parse::<EndpointId>() else {
+            remaining.retain(|m| m.id != candidate.id);
+            continue;
+        };
+        let request = AdminRequest::Handover {
+            successor: candidate.id.clone(),
+            room_name: room_name.clone(),
+            members: remaining.clone(),
+        };
+        match expect_ack(call(endpoint, to, request, step()).await) {
+            Ok(()) => {
+                successor = Some(candidate.id.clone());
+                break;
+            }
+            Err(e) => {
+                // Unreachable, or too old to host: the next in line, then.
+                tracing::debug!(%to, "could not hand the room over: {e:#}");
+                remaining.retain(|m| m.id != candidate.id);
+            }
+        }
+    }
+
+    let Some(successor) = successor else {
+        info!("nobody could take the room; closing it");
+        let notices = others
+            .iter()
+            .filter_map(|m| m.id.parse::<EndpointId>().ok())
+            .map(|id| notify_closed(endpoint.clone(), id));
+        join_all_bounded(notices, step()).await;
+        return;
+    };
+    info!(%successor, "handed the room over");
+    let notices = remaining
+        .iter()
+        .filter(|m| m.id != successor)
+        .filter_map(|m| m.id.parse::<EndpointId>().ok())
+        .map(|to| {
+            let endpoint = endpoint.clone();
+            let request = AdminRequest::Handover {
+                successor: successor.clone(),
+                room_name: room_name.clone(),
+                members: remaining.clone(),
+            };
+            async move {
+                match call(&endpoint, to, request, NOTICE_TIMEOUT).await {
+                    Ok(AdminResponse::Ack) => {}
+                    // Reached, but cannot follow: an older version.
+                    Ok(_) => notify_closed(endpoint, to).await,
+                    // They follow the new host once we have been quiet for
+                    // HOST_SILENCE.
+                    Err(e) => tracing::debug!(%to, "hand-off notice failed: {e:#}"),
+                }
+            }
+        });
+    join_all_bounded(notices, step()).await;
+}
+
+/// Runs the futures together, giving up on them after `limit`.
+async fn join_all_bounded<F: std::future::Future<Output = ()> + Send + 'static>(
+    futures: impl Iterator<Item = F>,
+    limit: Duration,
+) {
+    let tasks: Vec<_> = futures.map(tokio::spawn).collect();
+    let _ = tokio::time::timeout(limit, async {
+        for task in tasks {
+            let _ = task.await;
+        }
+    })
+    .await;
 }
 
 pub(crate) async fn notify_leave(endpoint: &Endpoint, coordinator: EndpointId) -> Result<()> {
