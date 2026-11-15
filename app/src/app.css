@@ -284,3 +284,43 @@ select.field option {
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
+
+/* Scrollbars in the night palette: a slim violet thumb on no track, brighter
+   while held. The webviews here are Chromium and WebKit, which both take the
+   -webkit- pseudo-elements; scrollbar-color is for any engine without them
+   (Chromium drops the pseudo-elements once it is set, so it stays behind
+   the check). */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: var(--line) padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--line), var(--mist) 30%) padding-box;
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: var(--mist) padding-box;
+}
+
+::-webkit-scrollbar-button {
+  display: none;
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line) transparent;
+  }
+}
