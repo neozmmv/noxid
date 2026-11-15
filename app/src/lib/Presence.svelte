@@ -6,11 +6,16 @@
   // backend reported: "unknown" is said as such, never guessed.
   let { friend }: { friend: FriendView } = $props();
 
+  // Online friends show the status they chose instead.
+  const shown = $derived(
+    friend.finishing ? "unknown" : friend.presence === "online" ? friend.status : friend.presence,
+  );
+
   const label = $derived.by(() => {
     if (friend.finishing) return "Finishing…";
     switch (friend.presence) {
       case "online":
-        return "Online";
+        return friend.status === "away" ? "Away" : friend.status === "busy" ? "Do not disturb" : "Online";
       case "offline":
         return friend.last_seen ? `Offline · seen ${ago(friend.last_seen)}` : "Offline";
       default:
@@ -19,7 +24,7 @@
   });
 </script>
 
-<span class={["presence", friend.finishing ? "unknown" : friend.presence]}>
+<span class={["presence", shown]}>
   <span class="dot" aria-hidden="true"></span>
   {label}
 </span>
@@ -42,8 +47,18 @@
   }
 
   .online .dot {
-    border-color: var(--lamp);
-    background: var(--lamp);
+    border-color: var(--status-online);
+    background: var(--status-online);
+  }
+
+  .away .dot {
+    border-color: var(--status-away);
+    background: var(--status-away);
+  }
+
+  .busy .dot {
+    border-color: var(--signal);
+    background: var(--signal);
   }
 
   .offline .dot {

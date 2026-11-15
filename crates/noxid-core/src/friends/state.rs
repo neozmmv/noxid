@@ -98,6 +98,9 @@ pub struct PeerRecord {
     /// What we call them, if we chose something.
     #[serde(default)]
     pub alias: Option<String>,
+    /// The hash of their profile picture, as their last ping or pong said.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar: Option<String>,
 }
 
 /// Why a local action was refused. The message is what the user sees.
@@ -204,6 +207,7 @@ impl Book {
                         relation,
                         name: String::new(),
                         alias: None,
+                        avatar: None,
                     },
                 );
             }
@@ -223,6 +227,21 @@ impl Book {
             return false;
         }
         record.name = name;
+        true
+    }
+
+    /// Takes the picture hash a peer sent. Anything but a well-formed hash
+    /// counts as no picture, so a record can never name a path. Returns
+    /// whether it changed.
+    fn set_avatar(&mut self, peer: &EndpointId, avatar: Option<&str>) -> bool {
+        let Some(record) = self.peers.get_mut(peer) else {
+            return false;
+        };
+        let avatar = avatar.filter(|a| crate::avatar::is_hash(a)).map(str::to_string);
+        if record.avatar == avatar {
+            return false;
+        }
+        record.avatar = avatar;
         true
     }
 
@@ -349,11 +368,13 @@ impl Book {
     }
 
     /// What to probe a friend with.
-    pub fn ping(&self, peer: &EndpointId, own_name: &str) -> Option<FriendMsg> {
+    pub fn ping(&self, peer: &EndpointId, own_name: &str, own_avatar: Option<&str>) -> Option<FriendMsg> {
         match self.relation(peer)? {
             Relation::Friends { id, .. } => Some(FriendMsg::Ping {
                 id: *id,
                 name: own_name.to_string(),
+                avatar: own_avatar.map(str::to_string),
+                status: Default::default(),
             }),
             _ => None,
         }
@@ -417,17 +438,19 @@ impl Book {
                 }
                 FriendReply::Ack
             }
-            FriendMsg::Ping { id, name } => match current {
+            FriendMsg::Ping { id, name, avatar, .. } => match current {
                 Some(Relation::Friends { id: ours, .. }) if ours == *id => {
                     self.set_name(&peer, name);
-                    FriendReply::Pong { name: String::new() }
+                    self.set_avatar(&peer, avatar.as_deref());
+                    FriendReply::Pong { name: String::new(), avatar: None, status: Default::default() }
                 }
                 // They only ping once they count us as a friend, so this is
                 // the confirmation our Accept was waiting for.
                 Some(Relation::Accepting { id: ours, .. }) if ours == *id => {
                     self.set(peer, Relation::Friends { id: ours, since: now });
                     self.set_name(&peer, name);
-                    FriendReply::Pong { name: String::new() }
+                    self.set_avatar(&peer, avatar.as_deref());
+                    FriendReply::Pong { name: String::new(), avatar: None, status: Default::default() }
                 }
                 Some(Relation::Closed { id: ours, reason, .. }) if ours == *id => FriendReply::Gone { reason },
                 _ => FriendReply::Unknown,
@@ -597,10 +620,12 @@ impl Book {
                 self.close(peer, ours, CloseReason::Removed, Side::Them, now);
                 true
             }
-            (FriendMsg::Ping { id, .. }, Relation::Friends { id: ours, .. }, FriendReply::Pong { name })
+            (FriendMsg::Ping { id, .. }, Relation::Friends { id: ours, .. }, FriendReply::Pong { name, avatar, .. })
                 if ours == *id =>
             {
-                self.set_name(&peer, name)
+                let named = self.set_name(&peer, name);
+                let pictured = self.set_avatar(&peer, avatar.as_deref());
+                named || pictured
             }
             _ => false,
         }
@@ -913,9 +938,30 @@ mod tests {
         p.a_to_b(T0);
         p.b.accept(&p.ia, T0).unwrap();
         p.b_to_a_reply_lost(T0);
-        let ping = p.a.ping(&p.ib, "alice").unwrap();
+        let ping = p.a.ping(&p.ib, "alice", None).unwrap();
         assert!(matches!(p.b.on_message(p.ia, &ping, T0), FriendReply::Pong { .. }));
         assert!(p.friends_with_same_id());
+    }
+
+    #[test]
+    fn pings_and_pongs_carry_pictures_but_only_well_formed_ones() {
+        let mut p = Pair::new();
+        p.a.request(p.ib, T0).unwrap();
+        p.a_to_b(T0);
+        p.b.accept(&p.ia, T0).unwrap();
+        p.b_to_a_reply_lost(T0);
+        let good = crate::avatar::hash(b"picture");
+        let ping = p.a.ping(&p.ib, "alice", Some(&good)).unwrap();
+        p.b.on_message(p.ia, &ping, T0);
+        assert_eq!(p.b.record(&p.ia).unwrap().avatar, Some(good.clone()));
+
+        let pong = FriendReply::Pong { name: String::new(), status: Default::default(), avatar: Some(good.clone()) };
+        assert!(p.a.on_reply(&p.ib, &ping, &pong, T0), "a new picture is a change");
+        assert_eq!(p.a.record(&p.ib).unwrap().avatar, Some(good));
+
+        let pong = FriendReply::Pong { name: String::new(), status: Default::default(), avatar: Some("../../key".into()) };
+        p.a.on_reply(&p.ib, &ping, &pong, T0);
+        assert_eq!(p.a.record(&p.ib).unwrap().avatar, None, "a path is never taken for a hash");
     }
 
     #[test]
@@ -956,7 +1002,7 @@ mod tests {
     fn a_removed_friend_learns_of_it_from_its_own_ping() {
         let mut p = friends();
         p.a.remove(&p.ib, T0 + 1).unwrap();
-        let ping = p.b.ping(&p.ia, "bob").unwrap();
+        let ping = p.b.ping(&p.ia, "bob", None).unwrap();
         let reply = p.a.on_message(p.ib, &ping, T0 + 2);
         assert_eq!(reply, FriendReply::Gone { reason: CloseReason::Removed });
         p.b.on_reply(&p.ia, &ping, &reply, T0 + 2);
@@ -978,7 +1024,7 @@ mod tests {
         // Old messages turn up again, in both directions.
         assert!(matches!(p.a.on_message(p.ib, &accept, T0 + 2), FriendReply::Gone { .. }));
         assert!(matches!(p.b.on_message(p.ia, &request, T0 + 2), FriendReply::Gone { .. }));
-        let ping = FriendMsg::Ping { id: accept_id(&accept), name: String::new() };
+        let ping = FriendMsg::Ping { id: accept_id(&accept), name: String::new(), avatar: None, status: Default::default() };
         assert!(matches!(p.a.on_message(p.ib, &ping, T0 + 2), FriendReply::Gone { .. }));
         assert!(!p.a.is_friend(&p.ib) && !p.b.is_friend(&p.ia));
     }
@@ -1103,11 +1149,11 @@ mod tests {
     #[test]
     fn a_ping_we_cannot_match_is_answered_without_harm() {
         let mut p = friends();
-        let ping = FriendMsg::Ping { id: RequestId([7; 16]), name: String::new() };
+        let ping = FriendMsg::Ping { id: RequestId([7; 16]), name: String::new(), avatar: None, status: Default::default() };
         assert_eq!(p.a.on_message(p.ib, &ping, T0), FriendReply::Unknown);
         assert!(p.a.is_friend(&p.ib));
         // And Unknown to our ping does not end it on our side either.
-        let ours = p.a.ping(&p.ib, "alice").unwrap();
+        let ours = p.a.ping(&p.ib, "alice", None).unwrap();
         p.a.on_reply(&p.ib, &ours, &FriendReply::Unknown, T0);
         assert!(p.a.is_friend(&p.ib));
     }

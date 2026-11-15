@@ -36,6 +36,7 @@ pub use net::FriendsHandler;
 use state::{Book, LocalError, Relation, Time};
 use store::Store;
 pub use view::{FriendsView, Presence};
+pub use wire::Status;
 
 /// How long each step of the protocol may take. Shortened in tests.
 #[derive(Debug, Clone)]
@@ -99,6 +100,10 @@ pub struct FriendsConfig {
     pub store_path: PathBuf,
     /// Our display name, sent with requests and pings.
     pub name: watch::Receiver<String>,
+    /// Our profile picture's hash, sent with pings and pongs.
+    pub avatar: watch::Receiver<Option<String>>,
+    /// The status we chose to show, sent with pings and pongs.
+    pub status: watch::Receiver<Status>,
     pub timing: Timing,
 }
 
@@ -173,6 +178,8 @@ pub(crate) struct Link {
     pub last_error: Option<String>,
     /// Retry even a request we had given up on.
     pub forced: bool,
+    /// The status they last told us they chose.
+    pub status: Status,
     /// Presence probes.
     pub probe_attempts: u32,
     pub next_probe: Option<tokio::time::Instant>,
@@ -200,6 +207,8 @@ pub(crate) struct Shared {
     pub endpoint: Endpoint,
     pub timing: Timing,
     pub name: watch::Receiver<String>,
+    pub avatar: watch::Receiver<Option<String>>,
+    pub status: watch::Receiver<Status>,
     pub book: Mutex<Book>,
     pub store: Store,
     pub problem: Option<String>,
@@ -237,6 +246,8 @@ impl Friends {
             endpoint: config.endpoint,
             timing: config.timing,
             name: config.name,
+            avatar: config.avatar,
+            status: config.status,
             book: Mutex::new(book),
             store: opened.store,
             problem: opened.problem,
@@ -287,6 +298,30 @@ impl Friends {
 
     pub fn view(&self) -> FriendsView {
         self.shared.view()
+    }
+
+    /// Friends whose pictures we know of, with each picture's hash.
+    pub fn avatars(&self) -> Vec<(EndpointId, String)> {
+        let book = self.shared.book.lock().unwrap();
+        book.records()
+            .iter()
+            .filter(|(_, r)| matches!(r.relation, Relation::Friends { .. }))
+            .filter_map(|(peer, r)| Some((*peer, r.avatar.clone()?)))
+            .collect()
+    }
+
+    /// Pings every friend now rather than at its next turn, so a change to
+    /// what we send them (our status) reaches them at once.
+    pub fn announce(&self) {
+        for link in self.shared.links.lock().unwrap().values_mut() {
+            link.next_probe = None;
+        }
+        self.shared.wake.notify_one();
+    }
+
+    /// Tells the frontend the view changed: a friend's picture arrived.
+    pub fn refresh(&self) {
+        self.shared.bump();
     }
 
     pub async fn send_request(&self, peer: EndpointId) -> Result<()> {
@@ -487,14 +522,27 @@ impl Shared {
             match &record.relation {
                 Relation::Friends { .. } | Relation::Accepting { .. } => {
                     let finishing = matches!(record.relation, Relation::Accepting { .. });
+                    let status = link.map(|l| l.status).unwrap_or_default();
                     let (presence, last_seen) = if finishing {
                         (Presence::Unknown, link.and_then(|l| l.last_ok))
+                    } else if status == Status::Invisible {
+                        // Shown as they asked: offline, and not just seen.
+                        match self.presence(link, now) {
+                            (Presence::Online, _) => (Presence::Offline, None),
+                            other => other,
+                        }
                     } else {
                         self.presence(link, now)
+                    };
+                    let status = match status {
+                        Status::Invisible => Status::Online,
+                        other => other,
                     };
                     friends.push(FriendView {
                         id: peer.to_string(),
                         name: name_of(peer),
+                        avatar: record.avatar.clone(),
+                        status,
                         alias: record.alias.clone(),
                         presence,
                         last_seen,

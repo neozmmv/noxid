@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use iroh::EndpointId;
 use noxid_core::media::{self, Mic, Quality, Screen};
 use noxid_core::audio::AudioDevice;
-use noxid_core::friends::{FriendsView, RingOutcome, parse_friend_id};
+use noxid_core::friends::{FriendsView, RingOutcome, Status, parse_friend_id};
 use noxid_core::{LeaveMode, Node, NodeConfig, QualityMode, Snapshot, Stream};
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager, RunEvent};
@@ -28,6 +28,9 @@ struct Profile {
     /// `None` until chosen, so the platform default applies.
     #[serde(default)]
     screen_audio: Option<bool>,
+    /// The status friends see.
+    #[serde(default)]
+    status: Status,
 }
 
 /// How often voice levels are pushed to the webview for the speaking
@@ -104,7 +107,16 @@ fn remember(node: &Node) {
         mic_device: snapshot.mic_device,
         output_device: snapshot.output_device,
         screen_audio: Some(snapshot.screen_audio),
+        status: snapshot.status,
     });
+}
+
+#[tauri::command]
+async fn set_status(state: tauri::State<'_, AppState>, status: Status) -> CommandResult<()> {
+    let node = node(&state).await?;
+    node.set_status(status);
+    remember(&node);
+    Ok(())
 }
 
 #[tauri::command]
@@ -123,6 +135,34 @@ async fn set_avatar(state: tauri::State<'_, AppState>, request: tauri::ipc::Requ
         return Err("expected the picture's bytes".to_string());
     };
     node(&state).await?.set_avatar(Some(bytes)).map_err(err)
+}
+
+/// Sets our profile picture to part of an animated GIF, kept animated: the
+/// request body is the GIF itself, and the `x-crop` header the square to keep,
+/// as `x,y,side` in the GIF's pixels.
+#[tauri::command]
+async fn set_animated_avatar(state: tauri::State<'_, AppState>, request: tauri::ipc::Request<'_>) -> CommandResult<()> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("expected the picture's bytes".to_string());
+    };
+    let crop = request
+        .headers()
+        .get("x-crop")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| {
+            let mut parts = value.split(',').map(|part| part.trim().parse::<u32>().ok());
+            Some(noxid_core::AvatarCrop {
+                x: parts.next()??,
+                y: parts.next()??,
+                side: parts.next()??,
+            })
+        })
+        .ok_or_else(|| "expected the part of the picture to keep".to_string())?;
+    node(&state)
+        .await?
+        .set_animated_avatar(bytes.clone(), crop)
+        .await
+        .map_err(err)
 }
 
 #[tauri::command]
@@ -493,7 +533,7 @@ fn friend_id(node: &Node, text: &str) -> CommandResult<EndpointId> {
 
 #[tauri::command]
 async fn friends(state: tauri::State<'_, AppState>) -> CommandResult<FriendsView> {
-    Ok(node(&state).await?.friends().view())
+    Ok(node(&state).await?.friends_view())
 }
 
 /// Checks a pasted Noxid ID and returns it in its canonical form.
@@ -586,7 +626,7 @@ fn forward_events(app: tauri::AppHandle, node: Node) {
     let mut friend_changes = node.friends().changes();
     tauri::async_runtime::spawn(async move {
         let _ = app.emit("snapshot", node.snapshot());
-        let _ = app.emit("friends", node.friends().view());
+        let _ = app.emit("friends", node.friends_view());
         loop {
             tokio::select! {
                 changed = changes.changed() => {
@@ -597,7 +637,7 @@ fn forward_events(app: tauri::AppHandle, node: Node) {
                 // redraw the call.
                 changed = friend_changes.changed() => {
                     if changed.is_err() { break; }
-                    let _ = app.emit("friends", node.friends().view());
+                    let _ = app.emit("friends", node.friends_view());
                 }
                 notice = notices.recv() => {
                     if let Ok(notice) = notice {
@@ -651,6 +691,7 @@ pub fn run() {
                     if let Some(on) = profile.screen_audio {
                         node.set_screen_audio(on);
                     }
+                    node.set_status(profile.status);
                     anyhow::Ok(node)
                 }
                 .await;
@@ -691,6 +732,8 @@ pub fn run() {
             open_release,
             latest_release,
             set_avatar,
+            set_animated_avatar,
+            set_status,
             clear_avatar,
             avatar,
             share_camera,

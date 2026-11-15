@@ -116,6 +116,8 @@ pub struct Snapshot {
     pub name: String,
     /// Our profile picture's hash, to fetch with `avatar`.
     pub avatar: Option<String>,
+    /// The status we show friends.
+    pub status: friends::Status,
     pub room: Option<RoomView>,
     pub mic_on: bool,
     /// Hearing nobody (and, while it lasts, mic off).
@@ -273,6 +275,10 @@ pub(crate) struct Inner {
     pub(crate) friends: Friends,
     /// Our profile picture's hash, if we have one.
     avatar: Mutex<Option<String>>,
+    /// The same hash, for the friends list to send with pings.
+    avatar_watch: watch::Sender<Option<String>>,
+    /// The status we show friends.
+    status_watch: watch::Sender<friends::Status>,
     /// Copies of other members' pictures.
     pub(crate) avatars: Mutex<Avatars>,
     pub room: Mutex<Room>,
@@ -282,6 +288,10 @@ pub(crate) struct Inner {
     pub knocks: Mutex<HashMap<String, PendingKnock>>,
     /// Filled in by the mesh, read when building snapshots.
     pub peers: Mutex<HashMap<EndpointId, PeerView>>,
+    /// Members the mesh has no session with, and since when. A member whose
+    /// PC shut down never says goodbye; this is how they are noticed gone
+    /// (see `admin::drop_absent`).
+    pub unreachable: Mutex<HashMap<EndpointId, Instant>>,
     /// Each participant's latest voice level, refreshed fast for the speaking
     /// indicator. Kept out of the snapshot so it can update without a redraw of
     /// everything else.
@@ -340,10 +350,15 @@ impl Node {
         let live = Live::builder(endpoint.clone()).spawn();
         let name = room::display_name(&config.name, &id.to_string());
         let (name_watch, name_rx) = watch::channel(name.clone());
+        let own_avatar = avatar::load_own();
+        let (avatar_watch, avatar_rx) = watch::channel(own_avatar.clone());
+        let (status_watch, status_rx) = watch::channel(friends::Status::default());
         let friends = Friends::spawn(FriendsConfig {
             endpoint: endpoint.clone(),
             store_path: crate::identity::state_dir()?.join("friends.json"),
             name: name_rx,
+            avatar: avatar_rx,
+            status: status_rx,
             timing: Timing::default(),
         });
         let (roster_tx, roster_rx) = watch::channel(Vec::new());
@@ -354,7 +369,9 @@ impl Node {
             name: Mutex::new(name),
             name_watch,
             friends: friends.clone(),
-            avatar: Mutex::new(avatar::load_own()),
+            avatar: Mutex::new(own_avatar),
+            avatar_watch,
+            status_watch,
             avatars: Mutex::new(Avatars::default()),
             room: Mutex::new(Room::default()),
             local: Mutex::new(Local {
@@ -377,6 +394,7 @@ impl Node {
             knocks: Mutex::new(HashMap::new()),
             peers: Mutex::new(HashMap::new()),
             levels: Mutex::new(HashMap::new()),
+            unreachable: Mutex::new(HashMap::new()),
             tiles: Mutex::new(HashMap::new()),
             camera_tiles: Mutex::new(HashMap::new()),
             quality_modes: Mutex::new(HashMap::new()),
@@ -425,6 +443,7 @@ impl Node {
 
         tokio::spawn(crate::mesh::run(inner.clone(), roster_rx));
         tokio::spawn(admin::roster_heartbeat(inner.clone()));
+        tokio::spawn(admin::drop_absent(inner.clone()));
         tokio::spawn(avatar::run(inner.clone()));
         tokio::spawn(forward_friend_events(inner.clone()));
 
@@ -506,6 +525,7 @@ impl Node {
             }
         };
         *self.inner.avatar.lock().unwrap() = hash.clone();
+        self.inner.avatar_watch.send_replace(hash.clone());
         let own_id = self.id().to_string();
         let mut room = self.inner.room.lock().unwrap();
         room.set_avatar(&own_id, hash.as_deref());
@@ -517,6 +537,27 @@ impl Node {
             self.inner.bump();
         }
         Ok(())
+    }
+
+    /// Sets the status friends see, and tells them now rather than at their
+    /// next presence check.
+    pub fn set_status(&self, status: friends::Status) {
+        let changed = self.inner.status_watch.send_if_modified(|current| {
+            let changed = *current != status;
+            *current = status;
+            changed
+        });
+        if changed {
+            self.inner.friends.announce();
+            self.inner.bump();
+        }
+    }
+
+    /// Sets our profile picture to the `crop` of an animated GIF, keeping it
+    /// animated (see [`avatar::animated`]).
+    pub async fn set_animated_avatar(&self, bytes: Vec<u8>, crop: avatar::Crop) -> Result<()> {
+        let picture = tokio::task::spawn_blocking(move || avatar::animated(&bytes, crop)).await??;
+        self.set_avatar(Some(&picture))
     }
 
     /// The picture with `hash`, ours or a member's, if we have it.
@@ -576,6 +617,9 @@ impl Node {
             );
             room.set_avatar(&own_id, own_avatar.as_deref());
         }
+        // The admission is the host speaking; the host's silence is counted
+        // from here, not from whenever the app started.
+        self.inner.heard_from_host();
         self.inner.start_local()?;
         self.inner.roster_changed(None);
         Ok(())
@@ -730,12 +774,22 @@ impl Node {
     }
 
     /// Starts sharing `screen`, or stops sharing with `None`. Switching from
-    /// one screen or window to another mid-share keeps the same broadcast,
-    /// so viewers carry on watching instead of losing the share and finding
-    /// it again.
+    /// one screen to another, or one window to another, mid-share keeps the
+    /// same broadcast, so viewers carry on watching instead of losing the
+    /// share and finding it again.
+    ///
+    /// Switching between a window and a whole screen starts a new broadcast
+    /// instead. The two are captured by different machinery (see
+    /// `media::Screen::source`), and swapping one for the other under a live
+    /// broadcast left viewers on a frozen picture; a new broadcast is what
+    /// stopping and sharing again did, which always worked.
     pub fn share_screen(&self, screen: Option<Screen>) -> Result<()> {
         let mut local = self.inner.local.lock().unwrap();
-        let switching = screen.is_some() && local.screen_broadcast.is_some();
+        let same_kind = match (&local.screen, &screen) {
+            (Some(before), Some(after)) => before.window().is_some() == after.window().is_some(),
+            _ => false,
+        };
+        let switching = screen.is_some() && local.screen_broadcast.is_some() && same_kind;
         // A window's share carries that window's sound alone, so moving to
         // another window (or to or from a display) moves the sound too.
         let sound_moves = switching
@@ -931,6 +985,19 @@ impl Node {
         &self.inner.friends
     }
 
+    /// The friends list as a frontend shows it: a friend's picture is named
+    /// only once we have a copy of it, as with members in the snapshot.
+    pub fn friends_view(&self) -> friends::FriendsView {
+        let mut view = self.inner.friends.view();
+        let avatars = self.inner.avatars.lock().unwrap();
+        for friend in &mut view.friends {
+            if friend.avatar.as_deref().is_some_and(|hash| !avatars.is_ready(hash)) {
+                friend.avatar = None;
+            }
+        }
+        view
+    }
+
     /// Rings a friend into our room, starting one if we are in none. Only the
     /// host can do this, since the ring carries an invite. Waits for the
     /// outcome.
@@ -1108,6 +1175,11 @@ impl Inner {
 
     pub fn host_silent_for(&self) -> Duration {
         self.last_heard_host.lock().unwrap().elapsed()
+    }
+
+    /// How long the mesh has had no session with `id`, if it has none.
+    pub fn unreachable_for(&self, id: &EndpointId) -> Option<Duration> {
+        self.unreachable.lock().unwrap().get(id).map(Instant::elapsed)
     }
 
     pub fn notice(&self, notice: Notice) {
@@ -1384,6 +1456,7 @@ impl Inner {
             id: own,
             name: self.name(),
             avatar: own_avatar,
+            status: *self.status_watch.borrow(),
             room: room_view,
             mic_on: local.mic_on,
             deafened: self.deafened.load(std::sync::atomic::Ordering::Relaxed),

@@ -46,6 +46,19 @@ const ROSTER_HEARTBEAT: Duration = Duration::from_secs(20);
 /// the next in line, having missed the hand-off itself: two missed heartbeats.
 pub const HOST_SILENCE: Duration = Duration::from_secs(2 * 20);
 
+/// How long a member may be out of reach before it counts as gone: its PC
+/// shut down, or its app was killed, without a word. Counted from when its
+/// connection timed out, so in all about a minute passes.
+const ABSENT_LIMIT: Duration = Duration::from_secs(20);
+
+/// How often absences are looked for.
+const ABSENT_CHECK: Duration = Duration::from_secs(5);
+
+/// How long a member goes without hearing from any host before it gives up on
+/// the room: four missed heartbeats, well after the next in line would have
+/// taken over from a host that vanished.
+const LOST_ROOM: Duration = Duration::from_secs(4 * 20);
+
 /// How long a host leaving spends handing the room over, in all: it runs on
 /// the way out of the app, which must stay quick.
 const HAND_OVER_BUDGET: Duration = Duration::from_secs(8);
@@ -410,6 +423,84 @@ pub(crate) async fn roster_heartbeat(inner: Arc<Inner>) {
         let own_id = inner.own_id().to_string();
         if inner.room.lock().unwrap().is_coordinator(&own_id) {
             broadcast_roster(&inner, None);
+        }
+    }
+}
+
+/// Notices members that vanished without leaving, as a PC shutting down
+/// does, so the call stops showing them as reconnecting forever:
+///
+/// - The host drops a member it has had no connection to for `ABSENT_LIMIT`.
+/// - The next in line takes the room over from a host it cannot reach and
+///   has not heard from for `HOST_SILENCE`; the others follow it, as they
+///   would a missed hand-off.
+/// - Anyone else who has heard from no host for `LOST_ROOM` leaves.
+pub(crate) async fn drop_absent(inner: Arc<Inner>) {
+    let mut tick = tokio::time::interval(ABSENT_CHECK);
+    loop {
+        tick.tick().await;
+        let own_id = inner.own_id().to_string();
+        let gone_for = |id: &str| {
+            id.parse::<EndpointId>()
+                .ok()
+                .and_then(|id| inner.unreachable_for(&id))
+                .unwrap_or_default()
+        };
+        let (active, is_host, coordinator, next, roster) = {
+            let room = inner.room.lock().unwrap();
+            (
+                room.is_active(),
+                room.is_coordinator(&own_id),
+                room.coordinator_id.clone(),
+                room.next_coordinator(),
+                room.roster(),
+            )
+        };
+        if !active {
+            continue;
+        }
+
+        if is_host {
+            let gone: Vec<Member> = roster
+                .into_iter()
+                .filter(|m| m.id != own_id && gone_for(&m.id) >= ABSENT_LIMIT)
+                .collect();
+            if gone.is_empty() {
+                continue;
+            }
+            {
+                let mut room = inner.room.lock().unwrap();
+                for member in &gone {
+                    room.remove_member(&member.id);
+                }
+            }
+            for member in &gone {
+                info!(id = %member.id, name = %member.name, "dropped from the room: out of reach");
+            }
+            inner.roster_changed(None);
+            continue;
+        }
+
+        let Some(coordinator) = coordinator else { continue };
+        let host_gone = gone_for(&coordinator) >= ABSENT_LIMIT
+            && inner.host_silent_for() >= HOST_SILENCE + ABSENT_CHECK;
+        if host_gone && next.as_deref() == Some(own_id.as_str()) {
+            let name = inner.name();
+            {
+                let mut room = inner.room.lock().unwrap();
+                let room_name = room.name.clone();
+                let rest: Vec<Member> = roster.into_iter().filter(|m| m.id != coordinator).collect();
+                room.promote(&own_id, &name, room_name, rest);
+                room.set_avatar(&own_id, inner.own_avatar().as_deref());
+            }
+            warn!(%coordinator, "the host vanished; taking the room over");
+            inner.heard_from_host();
+            inner.roster_changed(None);
+            inner.notice(Notice::NowHost);
+        } else if inner.host_silent_for() >= LOST_ROOM {
+            warn!(%coordinator, "no word from any host; leaving the room");
+            inner.leave_local().await;
+            inner.notice(Notice::Error("Lost the connection to the room.".into()));
         }
     }
 }

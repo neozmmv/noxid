@@ -18,12 +18,14 @@ import type {
   Quality,
   QualityMode,
   RingOutcome,
+  Status,
   Snapshot,
 } from "./types";
 
 export const api = {
   snapshot: () => invoke<Snapshot>("snapshot"),
   setName: (name: string) => invoke<void>("set_name", { name }),
+  setStatus: (status: Status) => invoke<void>("set_status", { status }),
   createRoom: (name: string | null) => invoke<void>("create_room", { name }),
   invite: () => invoke<string>("invite"),
   joinRoom: (code: string) => invoke<void>("join_room", { code }),
@@ -46,6 +48,12 @@ export const api = {
   openRelease: (tag: string) => invoke<void>("open_release", { tag }),
   latestRelease: () => invoke<string | null>("latest_release"),
   setAvatar: (image: Uint8Array) => invoke<void>("set_avatar", image),
+  /** Sets the picture to a square of an animated GIF, `side` pixels from
+   *  (`x`, `y`) in the GIF's own pixels, kept animated. */
+  setAnimatedAvatar: (gif: Uint8Array, crop: { x: number; y: number; side: number }) =>
+    invoke<void>("set_animated_avatar", gif, {
+      headers: { "x-crop": `${crop.x},${crop.y},${crop.side}` },
+    }),
   clearAvatar: () => invoke<void>("clear_avatar"),
   avatar: (hash: string) => invoke<ArrayBuffer>("avatar", { hash }),
   /** A still from a camera, in the layout sharePreview uses. */

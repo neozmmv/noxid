@@ -16,6 +16,10 @@
   --lamp: #f6b94a;
   --signal: #dc3641;
   --focus: #9fb4ff;
+  /* Status dots: green for online, yellow for away, the signal red for do
+     not disturb. */
+  --status-online: #3ecf7a;
+  --status-away: #f2cf3c;
   /* Behind dialogs: the night, thickened. */
   --scrim: rgb(4 2 12 / 0.72);
 
@@ -24,7 +28,9 @@
   --radius-card: 12px;
   --field-h: 44px;
 
-  --font: "Familjen Grotesk Variable", system-ui, sans-serif;
+  --font: "Inter Variable", system-ui, sans-serif;
+  /* The "Noxid" wordmark in the titlebar keeps its own face. */
+  --font-brand: "Familjen Grotesk Variable", system-ui, sans-serif;
   /* Type scale on a 1.25 ratio from a 15px body. */
   --step--1: 0.8rem;
   --step-0: 0.9375rem;
@@ -279,4 +285,44 @@ select.field option {
   overflow: hidden;
   clip: rect(0 0 0 0);
   white-space: nowrap;
+}
+
+/* Scrollbars in the night palette: a slim violet thumb on no track, brighter
+   while held. The webviews here are Chromium and WebKit, which both take the
+   -webkit- pseudo-elements; scrollbar-color is for any engine without them
+   (Chromium drops the pseudo-elements once it is set, so it stays behind
+   the check). */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: var(--line) padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--line), var(--mist) 30%) padding-box;
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: var(--mist) padding-box;
+}
+
+::-webkit-scrollbar-button {
+  display: none;
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line) transparent;
+  }
 }

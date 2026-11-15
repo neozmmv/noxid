@@ -33,6 +33,9 @@ n0-future = "0.3"
 bytes = "1"
 # Profile pictures are named by their hash; iroh already links this release.
 blake3 = "1.8"
+# Animated profile pictures: a GIF is cropped and scaled frame by frame,
+# which the webview's canvas cannot do without flattening it to one frame.
+image = { version = "0.25", default-features = false, features = ["gif"] }
 
 # WASAPI process loopback, for sharing the PC's sound without Noxid's own
 # output in it, GDI for border-free stills in the share picker, DirectShow
