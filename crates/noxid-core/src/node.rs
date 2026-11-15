@@ -282,6 +282,10 @@ pub(crate) struct Inner {
     pub knocks: Mutex<HashMap<String, PendingKnock>>,
     /// Filled in by the mesh, read when building snapshots.
     pub peers: Mutex<HashMap<EndpointId, PeerView>>,
+    /// Members the mesh has no session with, and since when. A member whose
+    /// PC shut down never says goodbye; this is how they are noticed gone
+    /// (see `admin::drop_absent`).
+    pub unreachable: Mutex<HashMap<EndpointId, Instant>>,
     /// Each participant's latest voice level, refreshed fast for the speaking
     /// indicator. Kept out of the snapshot so it can update without a redraw of
     /// everything else.
@@ -377,6 +381,7 @@ impl Node {
             knocks: Mutex::new(HashMap::new()),
             peers: Mutex::new(HashMap::new()),
             levels: Mutex::new(HashMap::new()),
+            unreachable: Mutex::new(HashMap::new()),
             tiles: Mutex::new(HashMap::new()),
             camera_tiles: Mutex::new(HashMap::new()),
             quality_modes: Mutex::new(HashMap::new()),
@@ -425,6 +430,7 @@ impl Node {
 
         tokio::spawn(crate::mesh::run(inner.clone(), roster_rx));
         tokio::spawn(admin::roster_heartbeat(inner.clone()));
+        tokio::spawn(admin::drop_absent(inner.clone()));
         tokio::spawn(avatar::run(inner.clone()));
         tokio::spawn(forward_friend_events(inner.clone()));
 
@@ -576,6 +582,9 @@ impl Node {
             );
             room.set_avatar(&own_id, own_avatar.as_deref());
         }
+        // The admission is the host speaking; the host's silence is counted
+        // from here, not from whenever the app started.
+        self.inner.heard_from_host();
         self.inner.start_local()?;
         self.inner.roster_changed(None);
         Ok(())
@@ -1108,6 +1117,11 @@ impl Inner {
 
     pub fn host_silent_for(&self) -> Duration {
         self.last_heard_host.lock().unwrap().elapsed()
+    }
+
+    /// How long the mesh has had no session with `id`, if it has none.
+    pub fn unreachable_for(&self, id: &EndpointId) -> Option<Duration> {
+        self.unreachable.lock().unwrap().get(id).map(Instant::elapsed)
     }
 
     pub fn notice(&self, notice: Notice) {

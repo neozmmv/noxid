@@ -116,6 +116,7 @@ pub(crate) async fn run(inner: Arc<Inner>, mut roster: watch::Receiver<Vec<Endpo
                     tasks.remove(&id);
                     close_sessions(&sessions, &id);
                     inner.peers.lock().unwrap().remove(&id);
+                    inner.unreachable.lock().unwrap().remove(&id);
                     inner.tiles.lock().unwrap().remove(&id);
                     inner.camera_tiles.lock().unwrap().remove(&id);
                     info!(peer = %id.fmt_short(), "peer left the call");
@@ -183,9 +184,13 @@ fn close_sessions(sessions: &Sessions, id: &EndpointId) {
 async fn peer_task(inner: Arc<Inner>, id: EndpointId, sessions: Sessions) {
     let mut backoff = BACKOFF_MIN;
     loop {
+        // Counted from the first failed reach, not from each retry, so a peer
+        // that is gone for good adds up to gone for long.
+        inner.unreachable.lock().unwrap().entry(id).or_insert_with(Instant::now);
         match connect(&inner, id).await {
             Ok(session) => {
                 backoff = BACKOFF_MIN;
+                inner.unreachable.lock().unwrap().remove(&id);
                 remember(&sessions, session.clone());
                 info!(peer = %id.fmt_short(), "connected");
                 tokio::select! {
