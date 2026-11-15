@@ -1,3 +1,5 @@
+import "@fontsource-variable/inter";
+// Only the wordmark in the titlebar keeps the old face.
 import "@fontsource-variable/familjen-grotesk";
 import "./app.css";
 import { mount } from "svelte";

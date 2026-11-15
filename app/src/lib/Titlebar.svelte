@@ -79,6 +79,7 @@
   }
 
   .mark {
+    font-family: var(--font-brand);
     display: flex;
     align-items: center;
     gap: 0.45rem;

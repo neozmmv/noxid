@@ -28,7 +28,9 @@
   --radius-card: 12px;
   --field-h: 44px;
 
-  --font: "Familjen Grotesk Variable", system-ui, sans-serif;
+  --font: "Inter Variable", system-ui, sans-serif;
+  /* The "Noxid" wordmark in the titlebar keeps its own face. */
+  --font-brand: "Familjen Grotesk Variable", system-ui, sans-serif;
   /* Type scale on a 1.25 ratio from a 15px body. */
   --step--1: 0.8rem;
   --step-0: 0.9375rem;
