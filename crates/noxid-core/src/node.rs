@@ -739,12 +739,22 @@ impl Node {
     }
 
     /// Starts sharing `screen`, or stops sharing with `None`. Switching from
-    /// one screen or window to another mid-share keeps the same broadcast,
-    /// so viewers carry on watching instead of losing the share and finding
-    /// it again.
+    /// one screen to another, or one window to another, mid-share keeps the
+    /// same broadcast, so viewers carry on watching instead of losing the
+    /// share and finding it again.
+    ///
+    /// Switching between a window and a whole screen starts a new broadcast
+    /// instead. The two are captured by different machinery (see
+    /// `media::Screen::source`), and swapping one for the other under a live
+    /// broadcast left viewers on a frozen picture; a new broadcast is what
+    /// stopping and sharing again did, which always worked.
     pub fn share_screen(&self, screen: Option<Screen>) -> Result<()> {
         let mut local = self.inner.local.lock().unwrap();
-        let switching = screen.is_some() && local.screen_broadcast.is_some();
+        let same_kind = match (&local.screen, &screen) {
+            (Some(before), Some(after)) => before.window().is_some() == after.window().is_some(),
+            _ => false,
+        };
+        let switching = screen.is_some() && local.screen_broadcast.is_some() && same_kind;
         // A window's share carries that window's sound alone, so moving to
         // another window (or to or from a display) moves the sound too.
         let sound_moves = switching
