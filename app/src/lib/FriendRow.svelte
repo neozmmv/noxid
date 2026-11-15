@@ -1,10 +1,11 @@
 <script lang="ts">
+  import Copy from "@lucide/svelte/icons/copy";
+  import CopyCheck from "@lucide/svelte/icons/copy-check";
   import Phone from "@lucide/svelte/icons/phone";
   import Ellipsis from "@lucide/svelte/icons/ellipsis";
   import { api } from "./api";
   import Avatar from "./Avatar.svelte";
   import Confirm from "./Confirm.svelte";
-  import IdChip from "./IdChip.svelte";
   import Menu from "./Menu.svelte";
   import Presence from "./Presence.svelte";
   import { tooltip } from "./tooltip";
@@ -22,6 +23,21 @@
 
   let menu = $state<{ x: number; y: number } | null>(null);
   let confirming = $state(false);
+  /** Shows the check for a moment after the ID is copied. */
+  let copied = $state(false);
+  let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+
+  async function copyId() {
+    try {
+      await navigator.clipboard.writeText(friend.id);
+    } catch {
+      showToast("The Noxid ID could not be copied.");
+      return;
+    }
+    copied = true;
+    clearTimeout(copiedTimer);
+    copiedTimer = setTimeout(() => (copied = false), 1500);
+  }
 
   function openMenu(event: MouseEvent) {
     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
@@ -42,10 +58,7 @@
   <Avatar name={friend.name} hash={friend.avatar} size={36} />
   <div class="who">
     <span class="name">{friend.name}</span>
-    <div class="meta">
-      <Presence {friend} />
-      <IdChip id={friend.id} />
-    </div>
+    <Presence {friend} />
     {#if friend.unaware}
       <span class="warn">They may not have you as a friend any more.</span>
     {/if}
@@ -62,6 +75,19 @@
         <Phone size={18} strokeWidth={1.75} aria-hidden="true" />
       </button>
     {/if}
+    <button
+      class="icon"
+      class:done={copied}
+      aria-label={`Copy ${friend.name}'s Noxid ID`}
+      use:tooltip={copied ? "Copied" : "Copy Noxid ID"}
+      onclick={copyId}
+    >
+      {#if copied}
+        <CopyCheck size={18} strokeWidth={1.75} aria-hidden="true" />
+      {:else}
+        <Copy size={18} strokeWidth={1.75} aria-hidden="true" />
+      {/if}
+    </button>
     <button class="icon" aria-label={`More for ${friend.name}`} use:tooltip={"More"} onclick={openMenu}>
       <Ellipsis size={18} strokeWidth={1.75} aria-hidden="true" />
     </button>
@@ -116,7 +142,8 @@
     flex: 1;
     min-width: 0;
     display: grid;
-    gap: 4px;
+    align-content: center;
+    gap: 2px;
   }
 
   .name {
@@ -124,13 +151,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .meta {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 6px 12px;
   }
 
   .warn {
@@ -159,6 +179,10 @@
   .icon:hover:not([aria-disabled]) {
     background: var(--dusk-raised);
     color: var(--moon);
+  }
+
+  .icon.done {
+    color: var(--status-online);
   }
 
   .icon.call:hover:not([aria-disabled]) {
