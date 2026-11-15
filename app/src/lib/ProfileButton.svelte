@@ -4,6 +4,9 @@
   import Menu from "./Menu.svelte";
   import NameField from "./NameField.svelte";
   import ProfilePicture from "./ProfilePicture.svelte";
+  import { statusLabel } from "./status";
+  import StatusDot from "./StatusDot.svelte";
+  import StatusPicker from "./StatusPicker.svelte";
   import { go } from "./nav.svelte";
   import { tooltip } from "./tooltip";
   import type { Snapshot } from "./types";
@@ -32,7 +35,7 @@
 <button
   class="profile"
   bind:this={button}
-  aria-label="Your profile"
+  aria-label={`Your profile, ${statusLabel(snapshot.status)}`}
   aria-expanded={!!open}
   use:tooltip={{ label: snapshot.name, side: "right" }}
   onpointerdown={(e) => {
@@ -42,6 +45,7 @@
   onclick={toggle}
 >
   <Avatar name={snapshot.name} hash={snapshot.avatar} size={36} />
+  <span class="badge"><StatusDot status={snapshot.status} size={12} /></span>
 </button>
 
 {#if open}
@@ -61,6 +65,10 @@
         </div>
       </div>
       <NameField {snapshot} />
+      <div class="status">
+        <span id="profile-status">Status</span>
+        <StatusPicker status={snapshot.status} labelledby="profile-status" />
+      </div>
       <div class="id">
         <span>Your Noxid ID</span>
         <IdChip id={snapshot.id} masked label="Noxid ID" />
@@ -83,6 +91,7 @@
 
 <style>
   .profile {
+    position: relative;
     display: grid;
     place-items: center;
     width: 44px;
@@ -95,6 +104,28 @@
 
   .profile:hover :global(.avatar) {
     box-shadow: 0 0 0 2px var(--line);
+  }
+
+  /* The status on the picture's lower right, ringed in the rail's colour so
+     it reads as cut out of the picture. */
+  .badge {
+    position: absolute;
+    right: 3px;
+    bottom: 3px;
+    padding: 2px;
+    border-radius: 50%;
+    background: var(--ink);
+    pointer-events: none;
+  }
+
+  .status {
+    display: grid;
+    gap: 4px;
+  }
+
+  .status > span {
+    color: var(--mist);
+    font-size: var(--step--1);
   }
 
   .card-body {

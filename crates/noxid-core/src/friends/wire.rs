@@ -55,6 +55,32 @@ impl<'de> Deserialize<'de> for RequestId {
     }
 }
 
+/// What someone chose to show their friends about themselves. Only ever
+/// a hint: it changes nothing about who can reach whom.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Status {
+    /// Also what a status this version does not know reads as.
+    #[default]
+    Online,
+    Away,
+    /// Do not disturb: rings still arrive, but make no sound.
+    Busy,
+    /// Shown to friends as offline.
+    Invisible,
+}
+
+impl<'de> Deserialize<'de> for Status {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(match String::deserialize(deserializer)?.as_str() {
+            "away" => Status::Away,
+            "busy" => Status::Busy,
+            "invisible" => Status::Invisible,
+            _ => Status::Online,
+        })
+    }
+}
+
 /// Why a request or friendship ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -95,6 +121,9 @@ pub enum FriendMsg {
         name: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         avatar: Option<String>,
+        /// The sender's chosen status; versions without one are online.
+        #[serde(default)]
+        status: Status,
     },
     /// Rings a friend into our room. Held open until they answer, decline, or
     /// the ring times out; never stored.
@@ -121,6 +150,8 @@ pub enum FriendReply {
         name: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         avatar: Option<String>,
+        #[serde(default)]
+        status: Status,
     },
     /// That id is closed on their side.
     Gone { reason: CloseReason },
@@ -145,6 +176,17 @@ mod tests {
         let json = serde_json::to_string(&FriendMsg::Cancel { id }).unwrap();
         assert_eq!(json, format!(r#"{{"op":"cancel","id":"{}"}}"#, "ab".repeat(16)));
         assert_eq!(serde_json::from_str::<FriendMsg>(&json).unwrap(), FriendMsg::Cancel { id });
+    }
+
+    #[test]
+    fn a_status_from_a_newer_version_reads_as_online() {
+        let id = "01".repeat(16);
+        let json = format!(r#"{{"op":"ping","id":"{id}","status":"gaming"}}"#);
+        let msg: FriendMsg = serde_json::from_str(&json).unwrap();
+        assert!(matches!(msg, FriendMsg::Ping { status: Status::Online, .. }));
+        let json = format!(r#"{{"op":"ping","id":"{id}","status":"busy"}}"#);
+        let msg: FriendMsg = serde_json::from_str(&json).unwrap();
+        assert!(matches!(msg, FriendMsg::Ping { status: Status::Busy, .. }));
     }
 
     #[test]

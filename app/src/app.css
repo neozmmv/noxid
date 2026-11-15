@@ -16,6 +16,10 @@
   --lamp: #f6b94a;
   --signal: #dc3641;
   --focus: #9fb4ff;
+  /* Status dots: green for online, yellow for away, the signal red for do
+     not disturb. */
+  --status-online: #3ecf7a;
+  --status-away: #f2cf3c;
   /* Behind dialogs: the night, thickened. */
   --scrim: rgb(4 2 12 / 0.72);
 

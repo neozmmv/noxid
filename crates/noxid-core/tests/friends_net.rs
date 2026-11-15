@@ -49,6 +49,7 @@ impl Peer {
             store_path: dir.join("friends.json"),
             name: name_rx,
             avatar: watch::channel(None).1,
+            status: watch::channel(Default::default()).1,
             timing: Timing::fast(),
         });
         let router = Router::builder(endpoint.clone())

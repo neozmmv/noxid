@@ -16,9 +16,10 @@
   const rings = $derived(friends.view?.rings ?? []);
   const calling = $derived(friends.view?.calling ?? null);
 
-  // Ring for as long as anyone is ringing.
+  // Ring for as long as anyone is ringing, silently on Do not disturb: the
+  // card still shows.
   $effect(() => {
-    if (rings.length > 0) startRinging();
+    if (rings.length > 0 && snapshot.status !== "busy") startRinging();
     else stopRinging();
   });
   onDestroy(stopRinging);

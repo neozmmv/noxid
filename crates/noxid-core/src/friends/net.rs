@@ -178,12 +178,20 @@ async fn on_message(shared: &Shared, peer: EndpointId, msg: &FriendMsg) -> Frien
     if after.is_some() {
         shared.contact_ok(peer);
     }
-    if matches!(msg, FriendMsg::Ping { .. }) && matches!(reply, FriendReply::Pong { .. }) {
-        shared.links.lock().unwrap().entry(peer).or_default().unaware = false;
+    if let FriendMsg::Ping { status, .. } = msg
+        && matches!(reply, FriendReply::Pong { .. })
+    {
+        {
+            let mut links = shared.links.lock().unwrap();
+            let link = links.entry(peer).or_default();
+            link.unaware = false;
+            link.status = *status;
+        }
         shared.bump();
         return FriendReply::Pong {
             name: shared.name.borrow().clone(),
             avatar: shared.avatar.borrow().clone(),
+            status: *shared.status.borrow(),
         };
     }
     reply
@@ -372,7 +380,10 @@ async fn deliver(shared: Arc<Shared>, peer: EndpointId) {
 async fn probe(shared: Arc<Shared>, peer: EndpointId) {
     let name = shared.name.borrow().clone();
     let avatar = shared.avatar.borrow().clone();
-    let msg = shared.book.lock().unwrap().ping(&peer, &name, avatar.as_deref());
+    let mut msg = shared.book.lock().unwrap().ping(&peer, &name, avatar.as_deref());
+    if let Some(FriendMsg::Ping { status, .. }) = &mut msg {
+        *status = *shared.status.borrow();
+    }
     let mut ok = false;
     if let Some(msg) = msg {
         let _permit = shared.dials.acquire().await;
@@ -389,8 +400,14 @@ async fn probe(shared: Arc<Shared>, peer: EndpointId) {
             Ok(reply) => {
                 ok = true;
                 shared.contact_ok(peer);
-                shared.links.lock().unwrap().entry(peer).or_default().unaware =
-                    matches!(reply, FriendReply::Unknown);
+                {
+                    let mut links = shared.links.lock().unwrap();
+                    let link = links.entry(peer).or_default();
+                    link.unaware = matches!(reply, FriendReply::Unknown);
+                    if let FriendReply::Pong { status, .. } = &reply {
+                        link.status = *status;
+                    }
+                }
                 shared.apply_reply(peer, &msg, &reply).await;
             }
             Err(e) => {

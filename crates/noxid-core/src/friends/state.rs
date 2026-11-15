@@ -374,6 +374,7 @@ impl Book {
                 id: *id,
                 name: own_name.to_string(),
                 avatar: own_avatar.map(str::to_string),
+                status: Default::default(),
             }),
             _ => None,
         }
@@ -437,11 +438,11 @@ impl Book {
                 }
                 FriendReply::Ack
             }
-            FriendMsg::Ping { id, name, avatar } => match current {
+            FriendMsg::Ping { id, name, avatar, .. } => match current {
                 Some(Relation::Friends { id: ours, .. }) if ours == *id => {
                     self.set_name(&peer, name);
                     self.set_avatar(&peer, avatar.as_deref());
-                    FriendReply::Pong { name: String::new(), avatar: None }
+                    FriendReply::Pong { name: String::new(), avatar: None, status: Default::default() }
                 }
                 // They only ping once they count us as a friend, so this is
                 // the confirmation our Accept was waiting for.
@@ -449,7 +450,7 @@ impl Book {
                     self.set(peer, Relation::Friends { id: ours, since: now });
                     self.set_name(&peer, name);
                     self.set_avatar(&peer, avatar.as_deref());
-                    FriendReply::Pong { name: String::new(), avatar: None }
+                    FriendReply::Pong { name: String::new(), avatar: None, status: Default::default() }
                 }
                 Some(Relation::Closed { id: ours, reason, .. }) if ours == *id => FriendReply::Gone { reason },
                 _ => FriendReply::Unknown,
@@ -619,7 +620,7 @@ impl Book {
                 self.close(peer, ours, CloseReason::Removed, Side::Them, now);
                 true
             }
-            (FriendMsg::Ping { id, .. }, Relation::Friends { id: ours, .. }, FriendReply::Pong { name, avatar })
+            (FriendMsg::Ping { id, .. }, Relation::Friends { id: ours, .. }, FriendReply::Pong { name, avatar, .. })
                 if ours == *id =>
             {
                 let named = self.set_name(&peer, name);
@@ -954,11 +955,11 @@ mod tests {
         p.b.on_message(p.ia, &ping, T0);
         assert_eq!(p.b.record(&p.ia).unwrap().avatar, Some(good.clone()));
 
-        let pong = FriendReply::Pong { name: String::new(), avatar: Some(good.clone()) };
+        let pong = FriendReply::Pong { name: String::new(), status: Default::default(), avatar: Some(good.clone()) };
         assert!(p.a.on_reply(&p.ib, &ping, &pong, T0), "a new picture is a change");
         assert_eq!(p.a.record(&p.ib).unwrap().avatar, Some(good));
 
-        let pong = FriendReply::Pong { name: String::new(), avatar: Some("../../key".into()) };
+        let pong = FriendReply::Pong { name: String::new(), status: Default::default(), avatar: Some("../../key".into()) };
         p.a.on_reply(&p.ib, &ping, &pong, T0);
         assert_eq!(p.a.record(&p.ib).unwrap().avatar, None, "a path is never taken for a hash");
     }
@@ -1023,7 +1024,7 @@ mod tests {
         // Old messages turn up again, in both directions.
         assert!(matches!(p.a.on_message(p.ib, &accept, T0 + 2), FriendReply::Gone { .. }));
         assert!(matches!(p.b.on_message(p.ia, &request, T0 + 2), FriendReply::Gone { .. }));
-        let ping = FriendMsg::Ping { id: accept_id(&accept), name: String::new(), avatar: None };
+        let ping = FriendMsg::Ping { id: accept_id(&accept), name: String::new(), avatar: None, status: Default::default() };
         assert!(matches!(p.a.on_message(p.ib, &ping, T0 + 2), FriendReply::Gone { .. }));
         assert!(!p.a.is_friend(&p.ib) && !p.b.is_friend(&p.ia));
     }
@@ -1148,7 +1149,7 @@ mod tests {
     #[test]
     fn a_ping_we_cannot_match_is_answered_without_harm() {
         let mut p = friends();
-        let ping = FriendMsg::Ping { id: RequestId([7; 16]), name: String::new(), avatar: None };
+        let ping = FriendMsg::Ping { id: RequestId([7; 16]), name: String::new(), avatar: None, status: Default::default() };
         assert_eq!(p.a.on_message(p.ib, &ping, T0), FriendReply::Unknown);
         assert!(p.a.is_friend(&p.ib));
         // And Unknown to our ping does not end it on our side either.

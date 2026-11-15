@@ -116,6 +116,8 @@ pub struct Snapshot {
     pub name: String,
     /// Our profile picture's hash, to fetch with `avatar`.
     pub avatar: Option<String>,
+    /// The status we show friends.
+    pub status: friends::Status,
     pub room: Option<RoomView>,
     pub mic_on: bool,
     /// Hearing nobody (and, while it lasts, mic off).
@@ -275,6 +277,8 @@ pub(crate) struct Inner {
     avatar: Mutex<Option<String>>,
     /// The same hash, for the friends list to send with pings.
     avatar_watch: watch::Sender<Option<String>>,
+    /// The status we show friends.
+    status_watch: watch::Sender<friends::Status>,
     /// Copies of other members' pictures.
     pub(crate) avatars: Mutex<Avatars>,
     pub room: Mutex<Room>,
@@ -348,11 +352,13 @@ impl Node {
         let (name_watch, name_rx) = watch::channel(name.clone());
         let own_avatar = avatar::load_own();
         let (avatar_watch, avatar_rx) = watch::channel(own_avatar.clone());
+        let (status_watch, status_rx) = watch::channel(friends::Status::default());
         let friends = Friends::spawn(FriendsConfig {
             endpoint: endpoint.clone(),
             store_path: crate::identity::state_dir()?.join("friends.json"),
             name: name_rx,
             avatar: avatar_rx,
+            status: status_rx,
             timing: Timing::default(),
         });
         let (roster_tx, roster_rx) = watch::channel(Vec::new());
@@ -365,6 +371,7 @@ impl Node {
             friends: friends.clone(),
             avatar: Mutex::new(own_avatar),
             avatar_watch,
+            status_watch,
             avatars: Mutex::new(Avatars::default()),
             room: Mutex::new(Room::default()),
             local: Mutex::new(Local {
@@ -530,6 +537,20 @@ impl Node {
             self.inner.bump();
         }
         Ok(())
+    }
+
+    /// Sets the status friends see, and tells them now rather than at their
+    /// next presence check.
+    pub fn set_status(&self, status: friends::Status) {
+        let changed = self.inner.status_watch.send_if_modified(|current| {
+            let changed = *current != status;
+            *current = status;
+            changed
+        });
+        if changed {
+            self.inner.friends.announce();
+            self.inner.bump();
+        }
     }
 
     /// Sets our profile picture to the `crop` of an animated GIF, keeping it
@@ -1435,6 +1456,7 @@ impl Inner {
             id: own,
             name: self.name(),
             avatar: own_avatar,
+            status: *self.status_watch.borrow(),
             room: room_view,
             mic_on: local.mic_on,
             deafened: self.deafened.load(std::sync::atomic::Ordering::Relaxed),

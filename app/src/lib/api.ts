@@ -18,12 +18,14 @@ import type {
   Quality,
   QualityMode,
   RingOutcome,
+  Status,
   Snapshot,
 } from "./types";
 
 export const api = {
   snapshot: () => invoke<Snapshot>("snapshot"),
   setName: (name: string) => invoke<void>("set_name", { name }),
+  setStatus: (status: Status) => invoke<void>("set_status", { status }),
   createRoom: (name: string | null) => invoke<void>("create_room", { name }),
   invite: () => invoke<string>("invite"),
   joinRoom: (code: string) => invoke<void>("join_room", { code }),

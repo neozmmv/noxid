@@ -4,6 +4,7 @@
   import IdChip from "./IdChip.svelte";
   import NameField from "./NameField.svelte";
   import ProfilePicture from "./ProfilePicture.svelte";
+  import StatusPicker from "./StatusPicker.svelte";
   import type { Snapshot } from "./types";
 
   let { snapshot }: { snapshot: Snapshot } = $props();
@@ -26,6 +27,11 @@
       <IdChip id={snapshot.id} masked label="Noxid ID" />
       <small>Share it so people can add you as a friend. It's also your room code when you host.</small>
     </div>
+  </section>
+
+  <section class="card">
+    <h2 id="status-heading">Status</h2>
+    <StatusPicker status={snapshot.status} labelledby="status-heading" />
   </section>
 
   <section class="card">
@@ -80,4 +86,5 @@
     color: var(--mist);
     font-size: var(--step--1);
   }
+
 </style>

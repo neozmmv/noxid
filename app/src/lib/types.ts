@@ -52,6 +52,8 @@ export interface Snapshot {
   name: string;
   /** Our profile picture's hash. */
   avatar: string | null;
+  /** The status friends see. */
+  status: Status;
   room: RoomView | null;
   mic_on: boolean;
   /** Hearing nobody; the mic is off while it lasts. */
@@ -155,12 +157,18 @@ export type LeaveMode = "hand_over" | "end";
 /** Only what the backend has seen: `unknown` until it has tried. */
 export type Presence = "online" | "offline" | "unknown";
 
+/** What someone chose to show friends. "invisible" is shown to them as
+ *  offline, so a friend's status is never "invisible". */
+export type Status = "online" | "away" | "busy" | "invisible";
+
 export interface FriendView {
   id: string;
   /** What they call themselves: a label, not proof of anything. */
   name: string;
   /** Their picture's hash, once we have a copy to show. */
   avatar: string | null;
+  /** The status they chose, meaningful while they are online. */
+  status: Status;
   alias: string | null;
   presence: Presence;
   last_seen: number | null;

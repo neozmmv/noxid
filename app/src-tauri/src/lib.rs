@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use iroh::EndpointId;
 use noxid_core::media::{self, Mic, Quality, Screen};
 use noxid_core::audio::AudioDevice;
-use noxid_core::friends::{FriendsView, RingOutcome, parse_friend_id};
+use noxid_core::friends::{FriendsView, RingOutcome, Status, parse_friend_id};
 use noxid_core::{LeaveMode, Node, NodeConfig, QualityMode, Snapshot, Stream};
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager, RunEvent};
@@ -28,6 +28,9 @@ struct Profile {
     /// `None` until chosen, so the platform default applies.
     #[serde(default)]
     screen_audio: Option<bool>,
+    /// The status friends see.
+    #[serde(default)]
+    status: Status,
 }
 
 /// How often voice levels are pushed to the webview for the speaking
@@ -104,7 +107,16 @@ fn remember(node: &Node) {
         mic_device: snapshot.mic_device,
         output_device: snapshot.output_device,
         screen_audio: Some(snapshot.screen_audio),
+        status: snapshot.status,
     });
+}
+
+#[tauri::command]
+async fn set_status(state: tauri::State<'_, AppState>, status: Status) -> CommandResult<()> {
+    let node = node(&state).await?;
+    node.set_status(status);
+    remember(&node);
+    Ok(())
 }
 
 #[tauri::command]
@@ -679,6 +691,7 @@ pub fn run() {
                     if let Some(on) = profile.screen_audio {
                         node.set_screen_audio(on);
                     }
+                    node.set_status(profile.status);
                     anyhow::Ok(node)
                 }
                 .await;
@@ -720,6 +733,7 @@ pub fn run() {
             latest_release,
             set_avatar,
             set_animated_avatar,
+            set_status,
             clear_avatar,
             avatar,
             share_camera,
