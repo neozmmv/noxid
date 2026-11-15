@@ -125,6 +125,34 @@ async fn set_avatar(state: tauri::State<'_, AppState>, request: tauri::ipc::Requ
     node(&state).await?.set_avatar(Some(bytes)).map_err(err)
 }
 
+/// Sets our profile picture to part of an animated GIF, kept animated: the
+/// request body is the GIF itself, and the `x-crop` header the square to keep,
+/// as `x,y,side` in the GIF's pixels.
+#[tauri::command]
+async fn set_animated_avatar(state: tauri::State<'_, AppState>, request: tauri::ipc::Request<'_>) -> CommandResult<()> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("expected the picture's bytes".to_string());
+    };
+    let crop = request
+        .headers()
+        .get("x-crop")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| {
+            let mut parts = value.split(',').map(|part| part.trim().parse::<u32>().ok());
+            Some(noxid_core::AvatarCrop {
+                x: parts.next()??,
+                y: parts.next()??,
+                side: parts.next()??,
+            })
+        })
+        .ok_or_else(|| "expected the part of the picture to keep".to_string())?;
+    node(&state)
+        .await?
+        .set_animated_avatar(bytes.clone(), crop)
+        .await
+        .map_err(err)
+}
+
 #[tauri::command]
 async fn clear_avatar(state: tauri::State<'_, AppState>) -> CommandResult<()> {
     node(&state).await?.set_avatar(None).map_err(err)
@@ -691,6 +719,7 @@ pub fn run() {
             open_release,
             latest_release,
             set_avatar,
+            set_animated_avatar,
             clear_avatar,
             avatar,
             share_camera,

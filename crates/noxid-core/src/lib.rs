@@ -22,6 +22,7 @@ mod still;
 #[cfg(windows)]
 mod wgc;
 
+pub use avatar::Crop as AvatarCrop;
 pub use node::{
     KnockView, LeaveMode, MAX_SCREEN_VOLUME, MAX_VOLUME, MemberView, Node, NodeConfig, Notice, PeerAudio, PeerView, QualityMode,
     RoomView, Snapshot, Stream,

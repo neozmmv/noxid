@@ -9,7 +9,8 @@
 
   // Choosing a profile picture: pick an image, then move and zoom it until
   // the part you want sits inside the circle. What leaves is a small square
-  // WebP of just that part, which is all an orb ever shows.
+  // WebP of just that part, which is all an orb ever shows. A GIF leaves as a
+  // GIF, cropped frame by frame on the Rust side, so it stays animated.
   interface Props {
     snapshot: Snapshot;
     onclose: () => void;
@@ -33,6 +34,8 @@
   let input: HTMLInputElement;
   let stage = $state<HTMLElement>();
   let image = $state<HTMLImageElement | null>(null);
+  /** The picked file, kept for a GIF, whose every frame has to be cropped. */
+  let file = $state<File | null>(null);
   let size = $state({ w: 0, h: 0 });
   let zoom = $state(1);
   // Where the picture's centre sits, from the circle's centre.
@@ -67,14 +70,14 @@
   }
 
   async function pick() {
-    const file = input.files?.[0];
+    const picked = input.files?.[0];
     input.value = "";
-    if (!file) return;
-    if (!ACCEPT.includes(file.type)) {
+    if (!picked) return;
+    if (!ACCEPT.includes(picked.type)) {
       error = "Choose a PNG, JPEG, WebP, GIF, AVIF or BMP picture.";
       return;
     }
-    const url = URL.createObjectURL(file);
+    const url = URL.createObjectURL(picked);
     const next = new Image();
     next.src = url;
     try {
@@ -86,6 +89,7 @@
     }
     if (image) URL.revokeObjectURL(image.src);
     image = next;
+    file = picked;
     size = { w: next.naturalWidth, h: next.naturalHeight };
     zoom = 1;
     x = 0;
@@ -157,6 +161,19 @@
     busy = true;
     error = null;
     try {
+      if (file?.type === "image/gif") {
+        // The circle, in the GIF's own pixels.
+        const side = CROP / scale;
+        const left = size.w / 2 - x / scale - side / 2;
+        const top = size.h / 2 - y / scale - side / 2;
+        await api.setAnimatedAvatar(new Uint8Array(await file.arrayBuffer()), {
+          x: Math.max(0, Math.round(left)),
+          y: Math.max(0, Math.round(top)),
+          side: Math.max(1, Math.round(side)),
+        });
+        onclose();
+        return;
+      }
       const canvas = document.createElement("canvas");
       canvas.width = OUT;
       canvas.height = OUT;
@@ -277,7 +294,7 @@
         </span>
       {/if}
     </button>
-    <p class="hint">PNG, JPEG, WebP, GIF, AVIF or BMP. You'll crop it next.</p>
+    <p class="hint">PNG, JPEG, WebP, GIF, AVIF or BMP. You'll crop it next; a GIF stays animated.</p>
   {/if}
 
   {#if error}

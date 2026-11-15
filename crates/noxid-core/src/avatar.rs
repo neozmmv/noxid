@@ -52,14 +52,16 @@ pub fn hash(bytes: &[u8]) -> String {
     blake3::hash(bytes).to_hex().to_string()
 }
 
-/// Whether `bytes` start like an image the webview can show: WebP, PNG or
-/// JPEG. Not a full check, which the webview's decoder makes anyway; this
-/// keeps anything that is plainly not a picture off the disk.
+/// Whether `bytes` start like an image the webview can show: WebP, PNG,
+/// JPEG or GIF (an animated picture). Not a full check, which the webview's
+/// decoder makes anyway; this keeps anything that is plainly not a picture
+/// off the disk.
 fn looks_like_image(bytes: &[u8]) -> bool {
     let webp = bytes.len() > 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP";
     let png = bytes.starts_with(b"\x89PNG\r\n\x1a\n");
     let jpeg = bytes.starts_with(&[0xff, 0xd8, 0xff]);
-    webp || png || jpeg
+    let gif = bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a");
+    webp || png || jpeg || gif
 }
 
 fn check(bytes: &[u8]) -> Result<()> {
@@ -67,9 +69,98 @@ fn check(bytes: &[u8]) -> Result<()> {
         bail!("a profile picture must be under {} KB", MAX_AVATAR / 1024);
     }
     if !looks_like_image(bytes) {
-        bail!("that is not a WebP, PNG or JPEG picture");
+        bail!("that is not a WebP, PNG, JPEG or GIF picture");
     }
     Ok(())
+}
+
+/// The part of a picture to keep, in the source's pixels: a square with its
+/// top left corner at (`x`, `y`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Crop {
+    pub x: u32,
+    pub y: u32,
+    pub side: u32,
+}
+
+/// The largest GIF taken in to be cropped. What leaves is far smaller.
+pub const MAX_ANIMATED_INPUT: usize = 32 * 1024 * 1024;
+
+/// The largest canvas and the most frames an animated picture may have. Each
+/// frame is scaled down as it is decoded, so these bound the work, not the
+/// memory.
+const MAX_ANIMATED_SIDE: u32 = 4096;
+const MAX_ANIMATED_FRAMES: usize = 300;
+
+/// Sizes tried for an animated picture, largest first, each with how many
+/// frames it keeps one of. It takes the first that fits in `MAX_AVATAR`.
+const ANIMATED_STEPS: [(u32, usize); 6] = [(256, 1), (192, 1), (128, 1), (128, 2), (96, 2), (96, 3)];
+
+/// Crops and scales an animated GIF to a square profile picture, every frame
+/// of it, and encodes it as a GIF again: the webview shows a GIF animated,
+/// where the frontend's canvas would keep only its first frame.
+pub fn animated(bytes: &[u8], crop: Crop) -> Result<Vec<u8>> {
+    use image::codecs::gif::{GifDecoder, GifEncoder, Repeat};
+    use image::imageops::{self, FilterType};
+    use image::{AnimationDecoder, Delay, Frame, ImageDecoder};
+
+    if bytes.len() > MAX_ANIMATED_INPUT {
+        bail!("that GIF is over {} MB", MAX_ANIMATED_INPUT / (1024 * 1024));
+    }
+    let decoder = GifDecoder::new(std::io::Cursor::new(bytes)).context("that is not a GIF")?;
+    let (width, height) = decoder.dimensions();
+    if width > MAX_ANIMATED_SIDE || height > MAX_ANIMATED_SIDE {
+        bail!("that GIF is too large to crop");
+    }
+    // Kept inside the canvas, whatever was asked.
+    let side = crop.side.clamp(1, width.min(height));
+    let x = crop.x.min(width - side);
+    let y = crop.y.min(height - side);
+
+    let top = ANIMATED_STEPS[0].0;
+    let mut frames: Vec<(image::RgbaImage, Delay)> = Vec::new();
+    for frame in decoder.into_frames().take(MAX_ANIMATED_FRAMES) {
+        let frame = frame.context("that GIF could not be read")?;
+        let delay = frame.delay();
+        let part = imageops::crop_imm(frame.buffer(), x, y, side, side).to_image();
+        frames.push((imageops::resize(&part, top, top, FilterType::Triangle), delay));
+    }
+    if frames.is_empty() {
+        bail!("that GIF has no pictures in it");
+    }
+
+    for (size, every) in ANIMATED_STEPS {
+        let mut out = Vec::new();
+        {
+            let mut encoder = GifEncoder::new_with_speed(&mut out, 10);
+            encoder.set_repeat(Repeat::Infinite)?;
+            let picked = frames.chunks(every).map(|chunk| {
+                // A skipped frame's time goes to the one kept, so the
+                // animation runs at the same speed.
+                let ms: u32 = chunk
+                    .iter()
+                    .map(|(_, delay)| {
+                        let (numer, denom) = delay.numer_denom_ms();
+                        numer / denom.max(1)
+                    })
+                    .sum();
+                let picture = if size == top {
+                    chunk[0].0.clone()
+                } else {
+                    imageops::resize(&chunk[0].0, size, size, FilterType::Triangle)
+                };
+                Frame::from_parts(picture, 0, 0, Delay::from_numer_denom_ms(ms, 1))
+            });
+            encoder.encode_frames(picked)?;
+        }
+        if out.len() <= MAX_AVATAR {
+            return Ok(out);
+        }
+    }
+    bail!(
+        "that GIF stays over {} KB even made small; try a shorter one",
+        MAX_AVATAR / 1024
+    )
 }
 
 fn own_path() -> Result<PathBuf> {
@@ -281,6 +372,50 @@ impl AvatarHandler {
 mod tests {
     use super::*;
 
+    /// A tiny two-frame GIF, red then blue, `side` pixels square.
+    fn two_frame_gif(side: u32) -> Vec<u8> {
+        use image::codecs::gif::GifEncoder;
+        use image::{Delay, Frame, Rgba, RgbaImage};
+        let mut out = Vec::new();
+        {
+            let mut encoder = GifEncoder::new(&mut out);
+            for colour in [[255, 0, 0, 255], [0, 0, 255, 255]] {
+                let picture = RgbaImage::from_pixel(side, side, Rgba(colour));
+                let frame = Frame::from_parts(picture, 0, 0, Delay::from_numer_denom_ms(100, 1));
+                encoder.encode_frame(frame).unwrap();
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn an_animated_picture_keeps_its_frames() {
+        use image::AnimationDecoder;
+        use image::codecs::gif::GifDecoder;
+        let gif = two_frame_gif(300);
+        let out = animated(&gif, Crop { x: 10, y: 20, side: 200 }).unwrap();
+        assert!(check(&out).is_ok());
+        let frames = GifDecoder::new(std::io::Cursor::new(&out))
+            .unwrap()
+            .into_frames()
+            .collect_frames()
+            .unwrap();
+        assert_eq!(frames.len(), 2, "still animated");
+        assert_eq!(frames[0].buffer().dimensions(), (256, 256));
+    }
+
+    #[test]
+    fn a_crop_outside_the_picture_is_kept_inside_it() {
+        let gif = two_frame_gif(64);
+        let out = animated(&gif, Crop { x: 500, y: 500, side: 9000 }).unwrap();
+        assert!(check(&out).is_ok());
+    }
+
+    #[test]
+    fn only_gifs_are_animated() {
+        assert!(animated(b"\x89PNG\r\n\x1a\n....", Crop { x: 0, y: 0, side: 1 }).is_err());
+    }
+
     #[test]
     fn only_hex_hashes_of_the_right_length_pass() {
         let good = hash(b"picture");
@@ -296,6 +431,7 @@ mod tests {
         assert!(check(b"RIFF\x10\x00\x00\x00WEBPVP8 ").is_ok());
         assert!(check(b"\x89PNG\r\n\x1a\n....").is_ok());
         assert!(check(&[0xff, 0xd8, 0xff, 0xe0]).is_ok());
+        assert!(check(b"GIF89a\x01\x00\x01\x00").is_ok());
         assert!(check(b"<svg></svg>").is_err());
         assert!(check(b"").is_err());
         let mut huge = b"\x89PNG\r\n\x1a\n".to_vec();

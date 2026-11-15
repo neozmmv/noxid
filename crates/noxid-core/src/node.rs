@@ -525,6 +525,13 @@ impl Node {
         Ok(())
     }
 
+    /// Sets our profile picture to the `crop` of an animated GIF, keeping it
+    /// animated (see [`avatar::animated`]).
+    pub async fn set_animated_avatar(&self, bytes: Vec<u8>, crop: avatar::Crop) -> Result<()> {
+        let picture = tokio::task::spawn_blocking(move || avatar::animated(&bytes, crop)).await??;
+        self.set_avatar(Some(&picture))
+    }
+
     /// The picture with `hash`, ours or a member's, if we have it.
     pub fn avatar(&self, hash: &str) -> Option<Vec<u8>> {
         let own = self.inner.own_avatar();
