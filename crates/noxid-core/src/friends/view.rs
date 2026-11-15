@@ -36,6 +36,9 @@ pub struct FriendView {
     pub id: String,
     /// What they call themselves; a label, not proof of anything.
     pub name: String,
+    /// Their picture's hash, once we have a copy to show (see
+    /// `Node::friends_view`).
+    pub avatar: Option<String>,
     pub alias: Option<String>,
     pub presence: Presence,
     /// When we last reached them or heard from them.

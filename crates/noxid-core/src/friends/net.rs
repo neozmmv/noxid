@@ -183,6 +183,7 @@ async fn on_message(shared: &Shared, peer: EndpointId, msg: &FriendMsg) -> Frien
         shared.bump();
         return FriendReply::Pong {
             name: shared.name.borrow().clone(),
+            avatar: shared.avatar.borrow().clone(),
         };
     }
     reply
@@ -370,7 +371,8 @@ async fn deliver(shared: Arc<Shared>, peer: EndpointId) {
 /// count us as a friend.
 async fn probe(shared: Arc<Shared>, peer: EndpointId) {
     let name = shared.name.borrow().clone();
-    let msg = shared.book.lock().unwrap().ping(&peer, &name);
+    let avatar = shared.avatar.borrow().clone();
+    let msg = shared.book.lock().unwrap().ping(&peer, &name, avatar.as_deref());
     let mut ok = false;
     if let Some(msg) = msg {
         let _permit = shared.dials.acquire().await;

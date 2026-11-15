@@ -39,7 +39,7 @@
 </script>
 
 <li class="row" oncontextmenu={(e) => { e.preventDefault(); menu = { x: e.clientX, y: e.clientY }; }}>
-  <Avatar name={friend.name} size={36} />
+  <Avatar name={friend.name} hash={friend.avatar} size={36} />
   <div class="who">
     <span class="name">{friend.name}</span>
     <div class="meta">

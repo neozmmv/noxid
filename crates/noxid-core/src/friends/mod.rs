@@ -99,6 +99,8 @@ pub struct FriendsConfig {
     pub store_path: PathBuf,
     /// Our display name, sent with requests and pings.
     pub name: watch::Receiver<String>,
+    /// Our profile picture's hash, sent with pings and pongs.
+    pub avatar: watch::Receiver<Option<String>>,
     pub timing: Timing,
 }
 
@@ -200,6 +202,7 @@ pub(crate) struct Shared {
     pub endpoint: Endpoint,
     pub timing: Timing,
     pub name: watch::Receiver<String>,
+    pub avatar: watch::Receiver<Option<String>>,
     pub book: Mutex<Book>,
     pub store: Store,
     pub problem: Option<String>,
@@ -237,6 +240,7 @@ impl Friends {
             endpoint: config.endpoint,
             timing: config.timing,
             name: config.name,
+            avatar: config.avatar,
             book: Mutex::new(book),
             store: opened.store,
             problem: opened.problem,
@@ -287,6 +291,21 @@ impl Friends {
 
     pub fn view(&self) -> FriendsView {
         self.shared.view()
+    }
+
+    /// Friends whose pictures we know of, with each picture's hash.
+    pub fn avatars(&self) -> Vec<(EndpointId, String)> {
+        let book = self.shared.book.lock().unwrap();
+        book.records()
+            .iter()
+            .filter(|(_, r)| matches!(r.relation, Relation::Friends { .. }))
+            .filter_map(|(peer, r)| Some((*peer, r.avatar.clone()?)))
+            .collect()
+    }
+
+    /// Tells the frontend the view changed: a friend's picture arrived.
+    pub fn refresh(&self) {
+        self.shared.bump();
     }
 
     pub async fn send_request(&self, peer: EndpointId) -> Result<()> {
@@ -495,6 +514,7 @@ impl Shared {
                     friends.push(FriendView {
                         id: peer.to_string(),
                         name: name_of(peer),
+                        avatar: record.avatar.clone(),
                         alias: record.alias.clone(),
                         presence,
                         last_seen,

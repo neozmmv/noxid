@@ -273,6 +273,8 @@ pub(crate) struct Inner {
     pub(crate) friends: Friends,
     /// Our profile picture's hash, if we have one.
     avatar: Mutex<Option<String>>,
+    /// The same hash, for the friends list to send with pings.
+    avatar_watch: watch::Sender<Option<String>>,
     /// Copies of other members' pictures.
     pub(crate) avatars: Mutex<Avatars>,
     pub room: Mutex<Room>,
@@ -344,10 +346,13 @@ impl Node {
         let live = Live::builder(endpoint.clone()).spawn();
         let name = room::display_name(&config.name, &id.to_string());
         let (name_watch, name_rx) = watch::channel(name.clone());
+        let own_avatar = avatar::load_own();
+        let (avatar_watch, avatar_rx) = watch::channel(own_avatar.clone());
         let friends = Friends::spawn(FriendsConfig {
             endpoint: endpoint.clone(),
             store_path: crate::identity::state_dir()?.join("friends.json"),
             name: name_rx,
+            avatar: avatar_rx,
             timing: Timing::default(),
         });
         let (roster_tx, roster_rx) = watch::channel(Vec::new());
@@ -358,7 +363,8 @@ impl Node {
             name: Mutex::new(name),
             name_watch,
             friends: friends.clone(),
-            avatar: Mutex::new(avatar::load_own()),
+            avatar: Mutex::new(own_avatar),
+            avatar_watch,
             avatars: Mutex::new(Avatars::default()),
             room: Mutex::new(Room::default()),
             local: Mutex::new(Local {
@@ -512,6 +518,7 @@ impl Node {
             }
         };
         *self.inner.avatar.lock().unwrap() = hash.clone();
+        self.inner.avatar_watch.send_replace(hash.clone());
         let own_id = self.id().to_string();
         let mut room = self.inner.room.lock().unwrap();
         room.set_avatar(&own_id, hash.as_deref());
@@ -955,6 +962,19 @@ impl Node {
     /// The friends list.
     pub fn friends(&self) -> &Friends {
         &self.inner.friends
+    }
+
+    /// The friends list as a frontend shows it: a friend's picture is named
+    /// only once we have a copy of it, as with members in the snapshot.
+    pub fn friends_view(&self) -> friends::FriendsView {
+        let mut view = self.inner.friends.view();
+        let avatars = self.inner.avatars.lock().unwrap();
+        for friend in &mut view.friends {
+            if friend.avatar.as_deref().is_some_and(|hash| !avatars.is_ready(hash)) {
+                friend.avatar = None;
+            }
+        }
+        view
     }
 
     /// Rings a friend into our room, starting one if we are in none. Only the

@@ -86,11 +86,15 @@ pub enum FriendMsg {
     Cancel { id: RequestId },
     /// Ends the friendship `id`.
     Remove { id: RequestId },
-    /// Presence and reconciliation between friends.
+    /// Presence and reconciliation between friends. `avatar` is the hash of
+    /// the sender's profile picture, which friends may fetch (see `avatar`);
+    /// left out by versions without it.
     Ping {
         id: RequestId,
         #[serde(default)]
         name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        avatar: Option<String>,
     },
     /// Rings a friend into our room. Held open until they answer, decline, or
     /// the ring times out; never stored.
@@ -115,6 +119,8 @@ pub enum FriendReply {
     Pong {
         #[serde(default)]
         name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        avatar: Option<String>,
     },
     /// That id is closed on their side.
     Gone { reason: CloseReason },

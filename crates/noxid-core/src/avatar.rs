@@ -1,7 +1,8 @@
-//! Profile pictures, passed straight between members.
+//! Profile pictures, passed straight between members and between friends.
 //!
-//! The roster carries only a picture's hash (blake3, hex). Each member serves
-//! their own picture on an ALPN of its own, members only; a member who sees a
+//! The roster (or a friend's ping) carries only a picture's hash (blake3,
+//! hex). Each node serves its own picture on an ALPN of its own, to room
+//! members and friends only; a node that sees a
 //! hash it has no copy of asks its owner for it, checks the bytes against the
 //! hash, and keeps them on disk under that hash. Someone met before shows up
 //! with their picture at once, and a changed picture is a new hash, so a copy
@@ -225,8 +226,8 @@ impl Avatars {
     }
 }
 
-/// Keeps a copy of every member's picture: on each change, fetches the ones
-/// missing, and every so often retries the ones that failed.
+/// Keeps a copy of every member's and friend's picture: on each change,
+/// fetches the ones missing, and every so often retries the ones that failed.
 pub(crate) async fn run(inner: Arc<Inner>) {
     let mut changes = inner.subscribe_changes();
     let mut retry = tokio::time::interval(RETRY_AFTER);
@@ -236,19 +237,17 @@ pub(crate) async fn run(inner: Arc<Inner>) {
             _ = retry.tick() => {}
         }
         let own_id = inner.own_id().to_string();
-        let wanted: Vec<(String, String)> = inner
+        let wanted: Vec<(EndpointId, String)> = inner
             .room
             .lock()
             .unwrap()
             .roster()
             .into_iter()
             .filter(|m| m.id != own_id)
-            .filter_map(|m| Some((m.id, m.avatar?)))
+            .filter_map(|m| Some((m.id.parse::<EndpointId>().ok()?, m.avatar?)))
+            .chain(inner.friends.avatars())
             .collect();
-        for (id, hash) in wanted {
-            let Ok(peer) = id.parse::<EndpointId>() else {
-                continue;
-            };
+        for (peer, hash) in wanted {
             {
                 let mut avatars = inner.avatars.lock().unwrap();
                 if avatars.ready.contains(&hash) || avatars.in_flight.contains(&hash) {
@@ -262,6 +261,7 @@ pub(crate) async fn run(inner: Arc<Inner>) {
                     avatars.ready.insert(hash);
                     drop(avatars);
                     inner.bump();
+                    inner.friends.refresh();
                     continue;
                 }
                 avatars.in_flight.insert(hash.clone());
@@ -291,6 +291,7 @@ pub(crate) async fn run(inner: Arc<Inner>) {
                 drop(avatars);
                 if ok {
                     inner.bump();
+                    inner.friends.refresh();
                 }
             });
         }
@@ -323,7 +324,7 @@ async fn fetch(inner: &Inner, peer: EndpointId, hash: &str) -> Result<()> {
     Ok(())
 }
 
-/// Serves our own picture to members who ask for it by hash.
+/// Serves our own picture to members and friends who ask for it by hash.
 #[derive(Clone)]
 pub(crate) struct AvatarHandler {
     pub inner: Arc<Inner>,
@@ -338,8 +339,9 @@ impl std::fmt::Debug for AvatarHandler {
 impl ProtocolHandler for AvatarHandler {
     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
         let peer = connection.remote_id();
-        let member = peer != self.inner.own_id() && self.inner.room.lock().unwrap().is_member(&peer.to_string());
-        if !member {
+        let member = self.inner.room.lock().unwrap().is_member(&peer.to_string());
+        let known = peer != self.inner.own_id() && (member || self.inner.friends.is_friend(&peer));
+        if !known {
             connection.close(1u32.into(), b"not a member");
             return Ok(());
         }

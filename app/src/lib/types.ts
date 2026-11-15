@@ -159,6 +159,8 @@ export interface FriendView {
   id: string;
   /** What they call themselves: a label, not proof of anything. */
   name: string;
+  /** Their picture's hash, once we have a copy to show. */
+  avatar: string | null;
   alias: string | null;
   presence: Presence;
   last_seen: number | null;

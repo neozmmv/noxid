@@ -521,7 +521,7 @@ fn friend_id(node: &Node, text: &str) -> CommandResult<EndpointId> {
 
 #[tauri::command]
 async fn friends(state: tauri::State<'_, AppState>) -> CommandResult<FriendsView> {
-    Ok(node(&state).await?.friends().view())
+    Ok(node(&state).await?.friends_view())
 }
 
 /// Checks a pasted Noxid ID and returns it in its canonical form.
@@ -614,7 +614,7 @@ fn forward_events(app: tauri::AppHandle, node: Node) {
     let mut friend_changes = node.friends().changes();
     tauri::async_runtime::spawn(async move {
         let _ = app.emit("snapshot", node.snapshot());
-        let _ = app.emit("friends", node.friends().view());
+        let _ = app.emit("friends", node.friends_view());
         loop {
             tokio::select! {
                 changed = changes.changed() => {
@@ -625,7 +625,7 @@ fn forward_events(app: tauri::AppHandle, node: Node) {
                 // redraw the call.
                 changed = friend_changes.changed() => {
                     if changed.is_err() { break; }
-                    let _ = app.emit("friends", node.friends().view());
+                    let _ = app.emit("friends", node.friends_view());
                 }
                 notice = notices.recv() => {
                     if let Ok(notice) = notice {
