@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { modal, scrim } from "./motion";
   import AudioSettingsPanel from "./AudioSettingsPanel.svelte";
   import type { Snapshot } from "./types";
 
@@ -19,8 +20,8 @@
 
 <svelte:window onkeydown={keydown} />
 
-<div class="backdrop" role="presentation" onclick={onclose}></div>
-<div class="settings" role="dialog" aria-modal="true" aria-label="Audio settings" tabindex="-1" bind:this={dialog}>
+<div class="backdrop" role="presentation" in:scrim|global out:scrim|global onclick={onclose}></div>
+<div class="settings" in:modal|global out:modal|global role="dialog" aria-modal="true" aria-label="Audio settings" tabindex="-1" bind:this={dialog}>
   <h2>Audio</h2>
   <AudioSettingsPanel {snapshot} />
   <div class="actions">

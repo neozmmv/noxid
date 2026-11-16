@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, type Snippet } from "svelte";
+  import { dropdown } from "./motion";
 
   // A right-click menu: placed at the pointer but kept inside the window, and
   // closed by Esc, a click elsewhere, or the window losing focus. What goes in
@@ -17,11 +18,15 @@
   let menu: HTMLElement;
   let left = $state(0);
   let top = $state(0);
+  // The corner nearest the pointer, so the menu grows out of the click; a
+  // menu pushed up or left by the window edge grows from the other side.
+  let origin = $state("top left");
 
   onMount(() => {
     const rect = menu.getBoundingClientRect();
     left = Math.max(8, Math.min(x, window.innerWidth - rect.width - 8));
     top = Math.max(8, Math.min(y, window.innerHeight - rect.height - 8));
+    origin = `${top < y ? "bottom" : "top"} ${left < x ? "right" : "left"}`;
     menu.querySelector<HTMLElement>("input, button")?.focus();
   });
 
@@ -40,7 +45,15 @@
 
 <svelte:window onkeydowncapture={keydown} onpointerdown={pointerdown} onblur={onclose} />
 
-<div class="menu" role="dialog" aria-label={label} bind:this={menu} style={`left: ${left}px; top: ${top}px`}>
+<div
+  class="menu"
+  role="dialog"
+  aria-label={label}
+  bind:this={menu}
+  style={`left: ${left}px; top: ${top}px; transform-origin: ${origin}`}
+  in:dropdown|global
+  out:dropdown|global
+>
   {@render children()}
 </div>
 

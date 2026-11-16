@@ -1,6 +1,7 @@
 <script lang="ts">
   import Check from "@lucide/svelte/icons/check";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
+  import { dropdown } from "./motion";
   import { STATUSES, setStatus, statusLabel } from "./status";
   import StatusDot from "./StatusDot.svelte";
   import type { Status } from "./types";
@@ -103,6 +104,8 @@
       aria-labelledby={labelledby}
       bind:this={list}
       onkeydown={listKey}
+      in:dropdown
+      out:dropdown
     >
       {#each STATUSES as option (option.value)}
         <button
@@ -149,7 +152,7 @@
 
   .trigger :global(.arrow) {
     color: var(--mist);
-    transition: transform 150ms ease;
+    transition: transform var(--dur-quick) var(--ease);
   }
 
   .trigger :global(.arrow.turned) {
@@ -170,11 +173,13 @@
     border-radius: 10px;
     background: var(--dusk);
     box-shadow: 0 12px 32px rgb(0 0 0 / 0.45);
+    transform-origin: top center;
   }
 
   .list.upward {
     top: auto;
     bottom: calc(100% + 4px);
+    transform-origin: bottom center;
   }
 
   .option {

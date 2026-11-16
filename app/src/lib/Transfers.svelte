@@ -4,6 +4,7 @@
   import Upload from "@lucide/svelte/icons/upload";
   import X from "@lucide/svelte/icons/x";
   import { api } from "./api";
+  import { rise } from "./motion";
   import { tooltip } from "./tooltip";
   import type { TransferView } from "./types";
 
@@ -58,6 +59,7 @@
     class:ended={t.state !== "offered" && t.state !== "waiting" && t.state !== "active"}
     class:bad={t.state === "failed" || t.state === "canceled_by_peer" || t.state === "declined"}
     role={t.state === "offered" ? "alert" : "status"}
+    in:rise={{ y: 8, blur: 0, scale: 1 }}
     aria-label={`${sending ? "Sending" : "Receiving"} ${t.file_name}`}
   >
     <span class="icon" aria-hidden="true">

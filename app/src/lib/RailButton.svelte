@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import { badge as pop } from "./motion";
   import { tooltip } from "./tooltip";
 
   // One icon in the navigation rail. `active` marks the view on screen;
@@ -32,9 +33,9 @@
 >
   {@render children()}
   {#if badge > 0}
-    <span class="badge count" aria-hidden="true">{badge > 99 ? "99+" : badge}</span>
+    <span class="badge count" aria-hidden="true" in:pop out:pop>{badge > 99 ? "99+" : badge}</span>
   {:else if dot}
-    <span class="dot" aria-hidden="true"></span>
+    <span class="dot" aria-hidden="true" in:pop out:pop></span>
   {/if}
 </button>
 
@@ -63,7 +64,13 @@
   }
 
   /* The pill on the rail's edge beside the view on screen. */
-  .rail-button.active::before {
+  .rail-button:active:not([aria-disabled]) {
+    scale: 0.96;
+  }
+
+  /* The pill on the rail's edge beside the view on screen. Always there, so
+     it can grow in when its view opens instead of popping. */
+  .rail-button::before {
     content: "";
     position: absolute;
     left: -12px;
@@ -72,6 +79,16 @@
     width: 3px;
     border-radius: 0 3px 3px 0;
     background: var(--lamp);
+    opacity: 0;
+    scale: 1 0.3;
+    transition:
+      opacity var(--dur-quick) var(--ease),
+      scale var(--dur-open) var(--ease);
+  }
+
+  .rail-button.active::before {
+    opacity: 1;
+    scale: 1 1;
   }
 
   .rail-button[aria-disabled] {

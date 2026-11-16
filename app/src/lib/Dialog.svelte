@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, type Snippet } from "svelte";
+  import { modal, scrim } from "./motion";
 
   // A modal: the night thickened behind it, Esc or a click outside to close,
   // and focus placed inside so keyboard users land in it.
@@ -30,8 +31,8 @@
 
 <svelte:window onkeydowncapture={keydown} />
 
-<div class="backdrop" role="presentation" onclick={onclose}></div>
-<div class="dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} tabindex="-1" bind:this={dialog}>
+<div class="backdrop" role="presentation" in:scrim|global out:scrim|global onclick={onclose}></div>
+<div class="dialog" in:modal|global out:modal|global role="dialog" aria-modal="true" aria-labelledby={titleId} tabindex="-1" bind:this={dialog}>
   <h2 id={titleId}>{title}</h2>
   {@render children()}
   {#if actions}

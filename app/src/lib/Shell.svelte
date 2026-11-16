@@ -3,6 +3,7 @@
   import Friends from "./Friends.svelte";
   import { friends } from "./friendlist.svelte";
   import Home from "./Home.svelte";
+  import { page } from "./motion";
   import { nav } from "./nav.svelte";
   import Rings from "./Rings.svelte";
   import Room from "./Room.svelte";
@@ -22,19 +23,25 @@
     <Sidebar {snapshot} requests={friends.view?.incoming.length ?? 0} />
   {/if}
   <section class="content">
-    {#if nav.view === "home"}
-      {#if snapshot.room}
-        <Room {snapshot} />
-      {:else}
-        <Home {snapshot} />
-      {/if}
-    {:else if nav.view === "friends"}
-      <Friends {snapshot} />
-    {:else if nav.view === "servers"}
-      <Servers />
-    {:else}
-      <Settings {snapshot} />
-    {/if}
+    <!-- A new view, or a call starting or ending, fades in a few pixels up;
+         the old one goes at once, so the two never share the panel. -->
+    {#key nav.view === "home" ? `home:${!!snapshot.room}` : nav.view}
+      <div class="view" in:page>
+        {#if nav.view === "home"}
+          {#if snapshot.room}
+            <Room {snapshot} />
+          {:else}
+            <Home {snapshot} />
+          {/if}
+        {:else if nav.view === "friends"}
+          <Friends {snapshot} />
+        {:else if nav.view === "servers"}
+          <Servers />
+        {:else}
+          <Settings {snapshot} />
+        {/if}
+      </div>
+    {/key}
   </section>
 </div>
 
@@ -58,6 +65,15 @@
     margin: 0 8px 8px 0;
     border-radius: var(--radius-card);
     background: var(--panel);
+    overflow: hidden;
+  }
+
+  /* The view scrolls itself rather than the panel: while it rises into
+     place it sits a few pixels low, and in a scrolling panel that overhang
+     would flash a scrollbar. The panel clips it instead. The room fills the
+     panel to its edges, so the view does too. */
+  .view {
+    height: 100%;
     overflow: auto;
   }
 

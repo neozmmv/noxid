@@ -18,6 +18,7 @@
   import AudioSettings from "./AudioSettings.svelte";
   import Dialog from "./Dialog.svelte";
   import Transfers from "./Transfers.svelte";
+  import { rise } from "./motion";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
   import { onMount } from "svelte";
   import CameraPicker from "./CameraPicker.svelte";
@@ -285,7 +286,7 @@
   </header>
 
   {#if showInvite && room.is_coordinator}
-    <section class="invite" aria-label="Invite people">
+    <section class="invite" aria-label="Invite people" in:rise={{ y: -6, blur: 0, scale: 1, duration: 250 }}>
       <div>
         <h2>Room code</h2>
         <p>Anyone with it can ask to join; you let them in.</p>
@@ -332,7 +333,7 @@
   {/if}
 
   {#each snapshot.knocks as knock (knock.id)}
-    <section class="knock" role="alert">
+    <section class="knock" role="alert" in:rise={{ y: 8, blur: 0, scale: 1 }}>
       <span><strong>{knock.name}</strong> is asking to join.</span>
       <button class="button primary" onclick={() => api.answerKnock(knock.id, true)}>Let in</button>
       <button class="button quiet" onclick={() => api.answerKnock(knock.id, false)}>Turn away</button>
@@ -668,7 +669,7 @@
 
   header :global(.chevron) {
     margin-right: -0.3rem;
-    transition: transform 150ms ease;
+    transition: transform var(--dur-quick) var(--ease);
   }
 
   header :global(.chevron.open) {

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { modal, scrim } from "./motion";
   import { api } from "./api";
   import type { CameraInfo } from "./types";
 
@@ -60,8 +61,8 @@
 
 <svelte:window onkeydown={keydown} />
 
-<div class="backdrop" role="presentation" onclick={onclose}></div>
-<div class="picker" role="dialog" aria-modal="true" aria-label="Choose a camera" tabindex="-1" bind:this={dialog}>
+<div class="backdrop" role="presentation" in:scrim|global out:scrim|global onclick={onclose}></div>
+<div class="picker" in:modal|global out:modal|global role="dialog" aria-modal="true" aria-label="Choose a camera" tabindex="-1" bind:this={dialog}>
   <h2>Camera</h2>
 
   <div class="grid">

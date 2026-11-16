@@ -67,6 +67,13 @@
   --step-3: 1.83rem;
   --step-4: 2.29rem;
 
+  /* Motion, after transitions.dev: one curve, a quick clock for hovers and
+     presses, a slower one for things that open. lib/motion.ts has the same
+     curve for transitions that run on mount. */
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-quick: 150ms;
+  --dur-open: 250ms;
+
   color-scheme: dark;
   font-family: var(--font);
   font-size: 16px;
@@ -113,9 +120,11 @@ select {
 button {
   cursor: pointer;
   transition:
-    background-color 150ms ease,
-    border-color 150ms ease,
-    color 150ms ease;
+    background-color var(--dur-quick) var(--ease),
+    border-color var(--dur-quick) var(--ease),
+    color var(--dur-quick) var(--ease),
+    opacity var(--dur-quick) var(--ease),
+    scale var(--dur-quick) var(--ease);
 }
 
 :focus-visible {
@@ -145,7 +154,7 @@ button {
 /* Fields count as keyboard-focused even when clicked, so the ring would show
    on every click; they mark focus with a brighter edge instead. */
 .field {
-  transition: border-color 150ms ease;
+  transition: border-color var(--dur-quick) var(--ease);
 }
 
 .field:focus-visible {
@@ -178,6 +187,12 @@ select.field option {
 
 .button:hover:not(:disabled) {
   background: var(--dusk-hover);
+}
+
+/* A press sinks the control a touch, so a click is felt before anything it
+   starts shows up. */
+.button:active:not(:disabled) {
+  scale: 0.98;
 }
 
 .button:disabled {
@@ -256,6 +271,7 @@ select.field option {
   pointer-events: none;
   opacity: 0;
   translate: 0 var(--rise);
+  /* transitions.dev's tooltip: in on the quick clock, out almost at once. */
   transition:
     opacity 60ms ease-out,
     translate 60ms ease-out;
@@ -278,8 +294,8 @@ select.field option {
   opacity: 1;
   translate: 0 0;
   transition:
-    opacity 140ms ease-out,
-    translate 160ms cubic-bezier(0.2, 0.8, 0.3, 1);
+    opacity var(--dur-quick) var(--ease),
+    translate var(--dur-quick) var(--ease);
 }
 
 /* The notch, pointing back at the control. */
