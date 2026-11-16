@@ -50,8 +50,8 @@
   --veil: rgb(9 4 35 / 0.85);
 }
 
-/* Dark gray: neutral graphite, lighter than the night, nothing violet. */
-[data-theme="gray"] {
+/* Smoke: neutral graphite, lighter than the night, nothing violet. */
+[data-theme="smoke"] {
   --ink: #1b1b1e;
   --dusk: #212125;
   --dusk-raised: #34343a;

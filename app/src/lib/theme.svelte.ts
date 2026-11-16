@@ -2,11 +2,11 @@
 // storage. Applied as data-theme on the root before the app first renders,
 // so a stored theme never flashes the default first.
 
-export type Theme = "night" | "gray" | "midnight";
+export type Theme = "night" | "smoke" | "midnight";
 
 export const THEMES: { value: Theme; label: string }[] = [
   { value: "night", label: "Night" },
-  { value: "gray", label: "Dark gray" },
+  { value: "smoke", label: "Smoke" },
   { value: "midnight", label: "Midnight" },
 ];
 
