@@ -6,7 +6,7 @@
 import { flushSync } from "svelte";
 
 export type Theme = "night" | "smoke" | "midnight";
-export type Accent = "amber" | "sky" | "lilac" | "rose" | "teal" | "sand";
+export type Accent = "gold" | "sky" | "lilac" | "rose" | "teal" | "sand";
 
 export const THEMES: { value: Theme; label: string }[] = [
   { value: "night", label: "Night" },
@@ -15,7 +15,7 @@ export const THEMES: { value: Theme; label: string }[] = [
 ];
 
 export const ACCENTS: { value: Accent; label: string }[] = [
-  { value: "amber", label: "Amber" },
+  { value: "gold", label: "Gold" },
   { value: "sky", label: "Sky" },
   { value: "lilac", label: "Lilac" },
   { value: "rose", label: "Rose" },
@@ -46,7 +46,7 @@ function store(key: string, value: string) {
 
 export const appearance = $state<{ theme: Theme; accent: Accent }>({
   theme: load(THEME_KEY, THEMES, "night"),
-  accent: load(ACCENT_KEY, ACCENTS, "amber"),
+  accent: load(ACCENT_KEY, ACCENTS, "gold"),
 });
 
 function apply() {

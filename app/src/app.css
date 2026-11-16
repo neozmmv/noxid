@@ -131,7 +131,7 @@
    to carry the night's dark text when it fills a button or a badge, and
    none is green or red, which mean online and do not disturb. After the
    root's gold, so a chosen accent wins. */
-[data-accent="amber"] {
+[data-accent="gold"] {
   --lamp: #f6b94a;
 }
 
