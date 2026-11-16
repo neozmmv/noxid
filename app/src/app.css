@@ -79,10 +79,13 @@
 }
 
 :root {
-  /* The accent, gold unless another is chosen (see the accents below). Its
-     hover and its faint tint are derived here, on the root, so they follow
-     whichever accent the root carries. */
-  --lamp: #f6b94a;
+  /* Noxid's own gold, from the app icon. It never changes: the mark in the
+     titlebar keeps it whatever accent is chosen. */
+  --gold: #f6b94a;
+  /* The accent, the gold unless another is chosen (see the accents below).
+     Its hover and its faint tint are derived here, on the root, so they
+     follow whichever accent the root carries. */
+  --lamp: var(--gold);
   --lamp-hover: color-mix(in srgb, var(--lamp), white 22%);
   --lamp-tint: color-mix(in srgb, var(--lamp) 12%, transparent);
   --signal: #dc3641;
@@ -132,7 +135,7 @@
    none is green or red, which mean online and do not disturb. After the
    root's gold, so a chosen accent wins. */
 [data-accent="gold"] {
-  --lamp: #f6b94a;
+  --lamp: var(--gold);
 }
 
 [data-accent="sky"] {

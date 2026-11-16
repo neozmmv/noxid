@@ -90,11 +90,12 @@
     letter-spacing: 0.01em;
   }
 
-  /* The app icon's ring: the one warm thing up here. */
+  /* The app icon's ring, in the brand gold rather than the accent: it is
+     the mark, so it stays the same whatever colour is chosen. */
   .ring {
     width: 12px;
     height: 12px;
-    border: 2.5px solid var(--lamp);
+    border: 2.5px solid var(--gold);
     border-radius: 50%;
   }
 
@@ -121,7 +122,7 @@
     color: var(--ink);
   }
 
-  /* Lit like the ring in the corner: the one thing up here asking for you. */
+  /* Lit in the accent: the one thing up here asking for you. */
   .controls .update {
     display: flex;
     gap: 0.35rem;
