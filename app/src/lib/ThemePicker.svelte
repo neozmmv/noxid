@@ -2,7 +2,8 @@
   import { appearance, setTheme, THEMES, type Theme } from "./theme.svelte";
 
   // The themes as a row of small pictures of the app, each drawn in its own
-  // colours: data-theme on the preview scopes that theme's palette to it.
+  // colours: data-theme on the preview scopes that theme's palette to it, and
+  // the chosen accent comes through from the root.
   // A radio group, so the arrow keys move the choice and Tab leaves.
   let { labelledby }: { labelledby?: string } = $props();
 
@@ -43,7 +44,7 @@
         <span class="panel">
           <span class="bar"></span>
           <span class="bar short"></span>
-          <span class="card"></span>
+          <span class="card"><span class="action"></span></span>
         </span>
       </span>
       <span class="name">{theme.label}</span>
@@ -140,11 +141,24 @@
     opacity: 0.6;
   }
 
+  /* The card holds a primary button in the accent, so the preview shows
+     the chosen accent against each theme. */
   .card {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
     height: 16px;
     margin-top: 2px;
+    padding: 0 3px;
     border: 1px solid var(--line);
     border-radius: 4px;
     background: var(--surface);
+  }
+
+  .action {
+    width: 20px;
+    height: 8px;
+    border-radius: 2px;
+    background: var(--lamp);
   }
 </style>

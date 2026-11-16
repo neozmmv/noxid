@@ -79,7 +79,12 @@
 }
 
 :root {
+  /* The accent, gold unless another is chosen (see the accents below). Its
+     hover and its faint tint are derived here, on the root, so they follow
+     whichever accent the root carries. */
   --lamp: #f6b94a;
+  --lamp-hover: color-mix(in srgb, var(--lamp), white 22%);
+  --lamp-tint: color-mix(in srgb, var(--lamp) 12%, transparent);
   --signal: #dc3641;
   --focus: #9fb4ff;
   /* Status dots: green for online, yellow for away, the signal red for do
@@ -119,6 +124,35 @@
   line-height: 1.45;
   color: var(--moon);
   background: var(--ink);
+}
+
+/* Accents, chosen in Settings beside the theme and kept across themes
+   (lib/theme.svelte.ts sets data-accent on the root). Each is light enough
+   to carry the night's dark text when it fills a button or a badge, and
+   none is green or red, which mean online and do not disturb. After the
+   root's gold, so a chosen accent wins. */
+[data-accent="amber"] {
+  --lamp: #f6b94a;
+}
+
+[data-accent="sky"] {
+  --lamp: #7cc4fa;
+}
+
+[data-accent="lilac"] {
+  --lamp: #b8a1ff;
+}
+
+[data-accent="rose"] {
+  --lamp: #f590ba;
+}
+
+[data-accent="teal"] {
+  --lamp: #4ccfd0;
+}
+
+[data-accent="sand"] {
+  --lamp: #dcc29b;
 }
 
 * {
@@ -254,7 +288,7 @@ select.field option {
 }
 
 .button.primary:hover:not(:disabled) {
-  background: #ffc964;
+  background: var(--lamp-hover);
 }
 
 .button.danger {

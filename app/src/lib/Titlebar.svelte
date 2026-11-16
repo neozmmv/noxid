@@ -131,7 +131,7 @@
     margin-right: 0.4rem;
     padding: 0 0.65rem;
     border-radius: 7px;
-    background: rgb(246 185 74 / 0.12);
+    background: var(--lamp-tint);
     color: var(--lamp);
     font-size: var(--step--1);
     font-weight: 600;

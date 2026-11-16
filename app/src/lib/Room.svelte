@@ -832,7 +832,7 @@
   }
 
   .mic.on:hover {
-    background: #ffc964;
+    background: var(--lamp-hover);
   }
 
   .spacer {

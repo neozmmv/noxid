@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AccentPicker from "./AccentPicker.svelte";
   import AudioSettingsPanel from "./AudioSettingsPanel.svelte";
   import Avatar from "./Avatar.svelte";
   import IdChip from "./IdChip.svelte";
@@ -38,6 +39,10 @@
   <section class="card">
     <h2 id="theme-heading">Theme</h2>
     <ThemePicker labelledby="theme-heading" />
+    <div class="accent">
+      <span id="accent-heading">Accent color</span>
+      <AccentPicker labelledby="accent-heading" />
+    </div>
   </section>
 
   <section class="card">
@@ -89,6 +94,19 @@
 
   .id span,
   .id small {
+    color: var(--mist);
+    font-size: var(--step--1);
+  }
+
+  /* Room around the swatches' rings, which draw 4px outside them. */
+  .accent {
+    display: grid;
+    gap: 12px;
+    padding-left: 4px;
+  }
+
+  .accent span {
+    margin-left: -4px;
     color: var(--mist);
     font-size: var(--step--1);
   }
