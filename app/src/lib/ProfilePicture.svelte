@@ -331,14 +331,14 @@
     top: 50%;
     transform: translate(-50%, -50%);
     width: min(400px, calc(100vw - 2rem));
-    padding: 1.4rem;
+    padding: 24px;
     border-radius: 16px;
     background: var(--dusk);
     border: 1px solid var(--line);
     outline: none;
     display: grid;
     justify-items: center;
-    gap: 0.9rem;
+    gap: 16px;
   }
 
   h2 {

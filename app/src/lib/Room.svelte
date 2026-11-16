@@ -583,8 +583,8 @@
     height: 100%;
     display: flex;
     flex-direction: column;
-    padding: 1.25rem 1.5rem 1rem;
-    gap: 0.9rem;
+    padding: 20px 24px 16px;
+    gap: 16px;
     overflow: hidden;
     /* Sized by the shell's content area, not the window, now that the rail
        takes part of it. */
@@ -600,7 +600,7 @@
     min-height: 0;
     display: grid;
     grid-template-rows: minmax(0, 1fr);
-    gap: 0.9rem;
+    gap: 16px;
   }
 
   .staged > .main {
@@ -762,9 +762,9 @@
   .knock {
     display: flex;
     align-items: center;
-    gap: 0.7rem;
-    padding: 0.7rem 1rem;
-    border-radius: 14px;
+    gap: 12px;
+    padding: 12px 16px;
+    border-radius: var(--radius-card);
     background: var(--surface);
     border: 1px solid var(--line);
     border-left: 4px solid var(--lamp);

@@ -136,7 +136,7 @@ button {
 .field {
   width: 100%;
   min-height: var(--field-h);
-  padding: 0.65rem 0.8rem;
+  padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--dusk);
@@ -168,10 +168,10 @@ select.field option {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.45rem;
-  padding: 0.6rem 1.1rem;
+  gap: 8px;
+  padding: 10px 16px;
   border: 1px solid transparent;
-  border-radius: 14px;
+  border-radius: 10px;
   background: var(--dusk-raised);
   font-weight: 600;
 }
@@ -227,7 +227,8 @@ select.field option {
   background: var(--lamp);
   color: var(--ink);
   font-size: 0.7rem;
-  font-weight: 700;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
   line-height: 1;
 }
 
@@ -239,10 +240,10 @@ select.field option {
   z-index: 1000;
   display: flex;
   align-items: center;
-  gap: 0.45rem;
+  gap: 8px;
   max-width: min(18rem, calc(100vw - 16px));
-  padding: 0.3rem 0.6rem;
-  border-radius: 7px;
+  padding: 4px 10px;
+  border-radius: 6px;
   background: var(--moon);
   color: var(--ink);
   font-size: var(--step--1);
@@ -256,8 +257,8 @@ select.field option {
   opacity: 0;
   translate: 0 var(--rise);
   transition:
-    opacity 80ms ease-in,
-    translate 80ms ease-in;
+    opacity 60ms ease-out,
+    translate 60ms ease-out;
 }
 
 .tooltip[data-side="below"] {

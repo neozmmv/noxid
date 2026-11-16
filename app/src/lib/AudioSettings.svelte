@@ -45,7 +45,7 @@
     width: min(440px, calc(100vw - 2rem));
     max-height: calc(100vh - 2rem);
     overflow: auto;
-    padding: 1.4rem;
+    padding: 24px;
     border-radius: 16px;
     background: var(--dusk);
     border: 1px solid var(--line);

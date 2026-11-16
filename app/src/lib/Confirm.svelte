@@ -51,12 +51,12 @@
     top: 50%;
     transform: translate(-50%, -50%);
     width: min(400px, calc(100vw - 2rem));
-    padding: 1.4rem;
+    padding: 24px;
     border-radius: 16px;
     background: var(--dusk);
     border: 1px solid var(--line);
     display: grid;
-    gap: 0.6rem;
+    gap: 12px;
   }
 
   h2 {
@@ -72,7 +72,7 @@
   .actions {
     display: flex;
     justify-content: flex-end;
-    gap: 0.6rem;
+    gap: 12px;
     margin-top: 0.6rem;
   }
 </style>

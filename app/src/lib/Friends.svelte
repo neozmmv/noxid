@@ -163,9 +163,7 @@
     margin: 0 0 4px 12px;
     color: var(--mist);
     font-size: var(--step--1);
-    font-weight: 650;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+    font-weight: 500;
   }
 
   ul {
@@ -244,8 +242,7 @@
     margin: 0;
     color: var(--moon);
     font-size: var(--step-1);
-    text-transform: none;
-    letter-spacing: 0;
+    font-weight: 600;
   }
 
   .empty p {

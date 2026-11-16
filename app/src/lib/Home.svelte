@@ -59,7 +59,7 @@
 
 <div class="home">
   <header>
-    <h1>{named ? `Welcome back, ${snapshot.name}` : "Welcome to Noxid"}</h1>
+    <h1>Start or join a call</h1>
     <p>Voice calls and screen sharing for small groups, straight between your computers. No server in the middle.</p>
   </header>
 

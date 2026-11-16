@@ -143,10 +143,10 @@
   .transfer {
     display: flex;
     align-items: center;
-    gap: 0.8rem;
-    padding: 0.7rem 1rem;
-    border-radius: 14px;
-    background: var(--dusk);
+    gap: 12px;
+    padding: 12px 16px;
+    border-radius: var(--radius-card);
+    background: var(--surface);
     border: 1px solid var(--line);
     border-left: 4px solid var(--lamp);
   }
@@ -169,7 +169,7 @@
     flex: 1;
     min-width: 0;
     display: grid;
-    gap: 0.4rem;
+    gap: 8px;
   }
 
   p {
@@ -206,7 +206,7 @@
   .actions {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 8px;
     flex-shrink: 0;
   }
 

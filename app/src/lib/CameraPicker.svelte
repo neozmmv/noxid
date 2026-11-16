@@ -102,7 +102,7 @@
     transform: translate(-50%, -50%);
     width: min(760px, calc(100vw - 2rem));
     max-height: calc(100vh - 2rem);
-    padding: 1.4rem;
+    padding: 24px;
     border-radius: 16px;
     background: var(--dusk);
     border: 1px solid var(--line);

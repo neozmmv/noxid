@@ -49,19 +49,19 @@
     position: fixed;
     z-index: 40;
     width: 260px;
-    padding: 0.5rem;
+    padding: 8px;
     border-radius: 12px;
     background: var(--dusk);
     border: 1px solid var(--line);
     box-shadow: 0 12px 32px rgb(0 0 0 / 0.45);
     display: grid;
-    gap: 0.15rem;
+    gap: 2px;
   }
 
   .menu :global(.who) {
     margin: 0;
-    padding: 0.35rem 0.5rem 0.5rem;
-    font-weight: 650;
+    padding: 4px 8px 8px;
+    font-weight: 600;
     overflow-wrap: anywhere;
   }
 
@@ -74,9 +74,9 @@
   .menu :global(.row) {
     display: flex;
     align-items: center;
-    gap: 0.55rem;
+    gap: 10px;
     width: 100%;
-    padding: 0.5rem;
+    padding: 8px;
     border: 0;
     border-radius: 8px;
     background: none;
@@ -99,8 +99,8 @@
 
   .menu :global(.slider) {
     display: grid;
-    gap: 0.35rem;
-    padding: 0.35rem 0.5rem 0.6rem;
+    gap: 4px;
+    padding: 4px 8px 8px;
   }
 
   .menu :global(.slider span) {
@@ -130,6 +130,6 @@
     width: 100%;
     border: 0;
     border-top: 1px solid var(--line);
-    margin: 0.25rem 0;
+    margin: 4px 0;
   }
 </style>
