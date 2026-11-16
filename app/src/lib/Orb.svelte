@@ -153,7 +153,7 @@
     place-items: center;
     background: var(--dusk-raised);
     font-size: calc(var(--size) * 0.32);
-    font-weight: 650;
+    font-weight: 600;
     letter-spacing: 0.02em;
     /* A gap of background between face and ring, so the ring reads as a
        separate indicator rather than a thicker edge. */

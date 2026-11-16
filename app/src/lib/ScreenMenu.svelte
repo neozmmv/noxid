@@ -168,6 +168,6 @@
   .choices button.on {
     background: var(--lamp);
     color: var(--ink);
-    font-weight: 650;
+    font-weight: 600;
   }
 </style>

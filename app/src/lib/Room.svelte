@@ -662,7 +662,7 @@
   h1 {
     margin: 0;
     font-size: var(--step-3);
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: -0.015em;
   }
 

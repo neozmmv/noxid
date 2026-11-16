@@ -181,7 +181,7 @@
   }
 
   .file {
-    font-weight: 650;
+    font-weight: 600;
   }
 
   .meta {
