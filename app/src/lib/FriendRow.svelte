@@ -156,7 +156,6 @@
   .warn {
     color: var(--mist);
     font-size: var(--step--1);
-    font-style: italic;
   }
 
   .actions {

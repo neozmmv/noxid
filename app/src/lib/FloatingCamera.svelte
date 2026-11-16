@@ -167,7 +167,7 @@
     background: rgb(243 241 250 / 0.85);
     cursor: nwse-resize;
     opacity: 0;
-    transition: opacity 120ms ease;
+    transition: opacity var(--dur-quick) var(--ease);
   }
 
   .floating:hover .handle,

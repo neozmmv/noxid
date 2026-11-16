@@ -1,5 +1,6 @@
 <script lang="ts">
   import ImagePlus from "@lucide/svelte/icons/image-plus";
+  import { modal, scrim } from "./motion";
   import ZoomIn from "@lucide/svelte/icons/zoom-in";
   import ZoomOut from "@lucide/svelte/icons/zoom-out";
   import { onMount } from "svelte";
@@ -222,8 +223,8 @@
 
 <svelte:window onkeydown={keydown} />
 
-<div class="backdrop" role="presentation" onclick={onclose}></div>
-<div class="picture" role="dialog" aria-modal="true" aria-label="Profile picture" tabindex="-1" bind:this={dialog}>
+<div class="backdrop" role="presentation" in:scrim|global out:scrim|global onclick={onclose}></div>
+<div class="picture" in:modal|global out:modal|global role="dialog" aria-modal="true" aria-label="Profile picture" tabindex="-1" bind:this={dialog}>
   <h2>Profile picture</h2>
 
   <input
@@ -331,14 +332,14 @@
     top: 50%;
     transform: translate(-50%, -50%);
     width: min(400px, calc(100vw - 2rem));
-    padding: 1.4rem;
+    padding: 24px;
     border-radius: 16px;
     background: var(--dusk);
     border: 1px solid var(--line);
     outline: none;
     display: grid;
     justify-items: center;
-    gap: 0.9rem;
+    gap: 16px;
   }
 
   h2 {
@@ -400,7 +401,7 @@
   .stage.empty::after {
     box-shadow: none;
     border: 2px dashed var(--line);
-    transition: border-color 150ms ease;
+    transition: border-color var(--dur-quick) var(--ease);
   }
 
   .stage.empty:hover::after {

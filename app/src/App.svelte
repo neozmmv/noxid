@@ -7,6 +7,7 @@
   import type { Notice, Snapshot } from "./lib/types";
   import Shell from "./lib/Shell.svelte";
   import Titlebar from "./lib/Titlebar.svelte";
+  import { rise } from "./lib/motion";
 
   let snapshot = $state<Snapshot | null>(null);
   let startError = $state<string | null>(null);
@@ -82,7 +83,9 @@
   {/if}
 
   {#if toast.message}
-    <div class="notice" role="status">{toast.message}</div>
+    {#key toast.message}
+      <div class="notice" role="status" in:rise out:rise|global>{toast.message}</div>
+    {/key}
   {/if}
 </main>
 
@@ -127,8 +130,8 @@
     position: fixed;
     left: 50%;
     bottom: 6.5rem;
-    transform: translateX(-50%);
-    padding: 0.7rem 1.2rem;
+    translate: -50% 0;
+    padding: 12px 20px;
     border-radius: 12px;
     background: var(--moon);
     color: var(--ink);

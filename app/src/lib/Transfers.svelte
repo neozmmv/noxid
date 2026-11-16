@@ -4,6 +4,7 @@
   import Upload from "@lucide/svelte/icons/upload";
   import X from "@lucide/svelte/icons/x";
   import { api } from "./api";
+  import { rise } from "./motion";
   import { tooltip } from "./tooltip";
   import type { TransferView } from "./types";
 
@@ -58,6 +59,7 @@
     class:ended={t.state !== "offered" && t.state !== "waiting" && t.state !== "active"}
     class:bad={t.state === "failed" || t.state === "canceled_by_peer" || t.state === "declined"}
     role={t.state === "offered" ? "alert" : "status"}
+    in:rise={{ y: 8, blur: 0, scale: 1 }}
     aria-label={`${sending ? "Sending" : "Receiving"} ${t.file_name}`}
   >
     <span class="icon" aria-hidden="true">
@@ -143,10 +145,10 @@
   .transfer {
     display: flex;
     align-items: center;
-    gap: 0.8rem;
-    padding: 0.7rem 1rem;
-    border-radius: 14px;
-    background: var(--dusk);
+    gap: 12px;
+    padding: 12px 16px;
+    border-radius: var(--radius-card);
+    background: var(--surface);
     border: 1px solid var(--line);
     border-left: 4px solid var(--lamp);
   }
@@ -169,7 +171,7 @@
     flex: 1;
     min-width: 0;
     display: grid;
-    gap: 0.4rem;
+    gap: 8px;
   }
 
   p {
@@ -181,7 +183,7 @@
   }
 
   .file {
-    font-weight: 650;
+    font-weight: 600;
   }
 
   .meta {
@@ -206,7 +208,7 @@
   .actions {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 8px;
     flex-shrink: 0;
   }
 

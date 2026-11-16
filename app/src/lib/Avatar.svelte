@@ -42,7 +42,7 @@
     background: var(--dusk-raised);
     color: var(--moon);
     font-size: calc(var(--size) * 0.38);
-    font-weight: 650;
+    font-weight: 600;
   }
 
   img {

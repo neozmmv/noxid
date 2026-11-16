@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { modal, scrim } from "./motion";
 
   // A yes-or-no question in a modal. The safe answer gets the focus, so Enter
   // or Esc never does the drastic thing by accident.
@@ -24,8 +25,8 @@
 
 <svelte:window onkeydown={keydown} />
 
-<div class="backdrop" role="presentation" onclick={oncancel}></div>
-<div class="confirm" role="alertdialog" aria-modal="true" aria-labelledby="confirm-question" aria-describedby={detail ? "confirm-detail" : undefined}>
+<div class="backdrop" role="presentation" in:scrim|global out:scrim|global onclick={oncancel}></div>
+<div class="confirm" in:modal|global out:modal|global role="alertdialog" aria-modal="true" aria-labelledby="confirm-question" aria-describedby={detail ? "confirm-detail" : undefined}>
   <h2 id="confirm-question">{question}</h2>
   {#if detail}
     <p id="confirm-detail">{detail}</p>
@@ -51,12 +52,12 @@
     top: 50%;
     transform: translate(-50%, -50%);
     width: min(400px, calc(100vw - 2rem));
-    padding: 1.4rem;
+    padding: 24px;
     border-radius: 16px;
     background: var(--dusk);
     border: 1px solid var(--line);
     display: grid;
-    gap: 0.6rem;
+    gap: 12px;
   }
 
   h2 {
@@ -72,7 +73,7 @@
   .actions {
     display: flex;
     justify-content: flex-end;
-    gap: 0.6rem;
+    gap: 12px;
     margin-top: 0.6rem;
   }
 </style>

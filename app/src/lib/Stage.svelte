@@ -280,7 +280,7 @@
     padding: 0.5rem 0.75rem;
     border-radius: 14px;
     background: rgb(9 4 35 / 0.85);
-    transition: opacity 200ms ease;
+    transition: opacity var(--dur-quick) var(--ease);
   }
 
   .fullscreen.idle {

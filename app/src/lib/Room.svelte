@@ -18,6 +18,7 @@
   import AudioSettings from "./AudioSettings.svelte";
   import Dialog from "./Dialog.svelte";
   import Transfers from "./Transfers.svelte";
+  import { rise } from "./motion";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
   import { onMount } from "svelte";
   import CameraPicker from "./CameraPicker.svelte";
@@ -285,7 +286,7 @@
   </header>
 
   {#if showInvite && room.is_coordinator}
-    <section class="invite" aria-label="Invite people">
+    <section class="invite" aria-label="Invite people" in:rise={{ y: -6, blur: 0, scale: 1, duration: 250 }}>
       <div>
         <h2>Room code</h2>
         <p>Anyone with it can ask to join; you let them in.</p>
@@ -332,7 +333,7 @@
   {/if}
 
   {#each snapshot.knocks as knock (knock.id)}
-    <section class="knock" role="alert">
+    <section class="knock" role="alert" in:rise={{ y: 8, blur: 0, scale: 1 }}>
       <span><strong>{knock.name}</strong> is asking to join.</span>
       <button class="button primary" onclick={() => api.answerKnock(knock.id, true)}>Let in</button>
       <button class="button quiet" onclick={() => api.answerKnock(knock.id, false)}>Turn away</button>
@@ -583,8 +584,8 @@
     height: 100%;
     display: flex;
     flex-direction: column;
-    padding: 1.25rem 1.5rem 1rem;
-    gap: 0.9rem;
+    padding: 20px 24px 16px;
+    gap: 16px;
     overflow: hidden;
     /* Sized by the shell's content area, not the window, now that the rail
        takes part of it. */
@@ -600,7 +601,7 @@
     min-height: 0;
     display: grid;
     grid-template-rows: minmax(0, 1fr);
-    gap: 0.9rem;
+    gap: 16px;
   }
 
   .staged > .main {
@@ -662,13 +663,13 @@
   h1 {
     margin: 0;
     font-size: var(--step-3);
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: -0.015em;
   }
 
   header :global(.chevron) {
     margin-right: -0.3rem;
-    transition: transform 150ms ease;
+    transition: transform var(--dur-quick) var(--ease);
   }
 
   header :global(.chevron.open) {
@@ -762,9 +763,9 @@
   .knock {
     display: flex;
     align-items: center;
-    gap: 0.7rem;
-    padding: 0.7rem 1rem;
-    border-radius: 14px;
+    gap: 12px;
+    padding: 12px 16px;
+    border-radius: var(--radius-card);
     background: var(--surface);
     border: 1px solid var(--line);
     border-left: 4px solid var(--lamp);

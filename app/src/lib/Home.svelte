@@ -59,7 +59,7 @@
 
 <div class="home">
   <header>
-    <h1>{named ? `Welcome back, ${snapshot.name}` : "Welcome to Noxid"}</h1>
+    <h1>Start or join a call</h1>
     <p>Voice calls and screen sharing for small groups, straight between your computers. No server in the middle.</p>
   </header>
 
@@ -116,7 +116,7 @@
   h1 {
     margin: 0;
     font-size: var(--step-3);
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: -0.02em;
     overflow-wrap: anywhere;
   }
@@ -175,7 +175,7 @@
   h2 {
     margin: 0;
     font-size: var(--step-1);
-    font-weight: 650;
+    font-weight: 600;
   }
 
   form p {

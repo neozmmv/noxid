@@ -6,6 +6,7 @@
   import Avatar from "./Avatar.svelte";
   import { answerRing } from "./calls";
   import { friends } from "./friendlist.svelte";
+  import { rise } from "./motion";
   import { startRinging, stopRinging } from "./ringtone";
   import type { Snapshot } from "./types";
 
@@ -36,7 +37,7 @@
 {#if rings.length > 0}
   <div class="rings" role="region" aria-label="Incoming calls">
     {#each rings as ring (ring.id)}
-      <div class="card ring" role="alertdialog" aria-label={`${ring.name} is calling`}>
+      <div class="card ring" in:rise|global={{ y: -12 }} out:rise|global={{ y: -12 }} role="alertdialog" aria-label={`${ring.name} is calling`}>
         <Avatar name={ring.name} size={44} />
         <div class="text">
           <strong>{ring.name} is calling</strong>
@@ -60,7 +61,7 @@
 {/if}
 
 {#if calling}
-  <div class="calling" role="status">
+  <div class="calling" role="status" in:rise={{ y: -8 }} out:rise={{ y: -8 }}>
     <span class="pulse" aria-hidden="true"></span>
     Calling {calling.name}…
     <button class="button danger small" onclick={() => api.hangUp()}>Hang up</button>
