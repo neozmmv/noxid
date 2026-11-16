@@ -168,8 +168,7 @@
     gap: 6px;
   }
 
-  .id span,
-  .id small {
+  .id span {
     color: var(--mist);
     font-size: var(--step--1);
   }
