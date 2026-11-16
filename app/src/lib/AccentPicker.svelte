@@ -48,10 +48,13 @@
 </div>
 
 <style>
+  /* Room for the rings, which draw 4px outside the swatches, so the ring
+     rather than the swatch lines up with the label above. */
   .accents {
     display: flex;
     flex-wrap: wrap;
     gap: 12px;
+    padding: 4px 0 4px 4px;
     outline: none;
   }
 

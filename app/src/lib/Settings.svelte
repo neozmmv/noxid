@@ -36,10 +36,13 @@
     <StatusPicker status={snapshot.status} labelledby="status-heading" />
   </section>
 
-  <section class="card">
-    <h2 id="theme-heading">Theme</h2>
-    <ThemePicker labelledby="theme-heading" />
-    <div class="accent">
+  <section class="card appearance">
+    <h2>Appearance</h2>
+    <div class="group">
+      <span id="theme-heading">Theme</span>
+      <ThemePicker labelledby="theme-heading" />
+    </div>
+    <div class="group">
       <span id="accent-heading">Accent color</span>
       <AccentPicker labelledby="accent-heading" />
     </div>
@@ -98,15 +101,22 @@
     font-size: var(--step--1);
   }
 
-  /* Room around the swatches' rings, which draw 4px outside them. */
-  .accent {
-    display: grid;
-    gap: 12px;
-    padding-left: 4px;
+  /* Two choices of equal weight under one heading: each gets the same small
+     label, set closer to its own options (8) than to the group above (24). */
+  .appearance {
+    gap: 24px;
   }
 
-  .accent span {
-    margin-left: -4px;
+  .appearance h2 {
+    margin-bottom: -8px;
+  }
+
+  .group {
+    display: grid;
+    gap: 8px;
+  }
+
+  .group > span {
     color: var(--mist);
     font-size: var(--step--1);
   }
