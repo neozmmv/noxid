@@ -1,10 +1,12 @@
 <script lang="ts">
+  import AccentPicker from "./AccentPicker.svelte";
   import AudioSettingsPanel from "./AudioSettingsPanel.svelte";
   import Avatar from "./Avatar.svelte";
   import IdChip from "./IdChip.svelte";
   import NameField from "./NameField.svelte";
   import ProfilePicture from "./ProfilePicture.svelte";
   import StatusPicker from "./StatusPicker.svelte";
+  import ThemePicker from "./ThemePicker.svelte";
   import type { Snapshot } from "./types";
 
   let { snapshot }: { snapshot: Snapshot } = $props();
@@ -32,6 +34,18 @@
   <section class="card">
     <h2 id="status-heading">Status</h2>
     <StatusPicker status={snapshot.status} labelledby="status-heading" />
+  </section>
+
+  <section class="card appearance">
+    <h2>Appearance</h2>
+    <div class="group">
+      <span id="theme-heading">Theme</span>
+      <ThemePicker labelledby="theme-heading" />
+    </div>
+    <div class="group">
+      <span id="accent-heading">Accent color</span>
+      <AccentPicker labelledby="accent-heading" />
+    </div>
   </section>
 
   <section class="card">
@@ -83,6 +97,26 @@
 
   .id span,
   .id small {
+    color: var(--mist);
+    font-size: var(--step--1);
+  }
+
+  /* Two choices of equal weight under one heading: each gets the same small
+     label, set closer to its own options (8) than to the group above (24). */
+  .appearance {
+    gap: 24px;
+  }
+
+  .appearance h2 {
+    margin-bottom: -8px;
+  }
+
+  .group {
+    display: grid;
+    gap: 8px;
+  }
+
+  .group > span {
     color: var(--mist);
     font-size: var(--step--1);
   }

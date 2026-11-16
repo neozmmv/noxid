@@ -1,6 +1,8 @@
 // Inter comes from app.css; only the wordmark in the titlebar keeps the old face.
 import "@fontsource-variable/familjen-grotesk";
 import "./app.css";
+// Sets the stored theme on the root before anything renders.
+import "./lib/theme.svelte";
 import { mount } from "svelte";
 import App from "./App.svelte";
 

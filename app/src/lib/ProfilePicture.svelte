@@ -385,7 +385,7 @@
     border-radius: 50%;
     box-shadow:
       0 0 0 2px var(--lamp),
-      0 0 0 999px rgb(4 2 12 / 0.68);
+      0 0 0 999px color-mix(in srgb, var(--ink) 68%, transparent);
     pointer-events: none;
   }
 
@@ -430,7 +430,7 @@
     bottom: 20px;
     padding: 0.3rem 0.7rem;
     border-radius: 999px;
-    background: rgb(4 2 12 / 0.75);
+    background: color-mix(in srgb, var(--ink) 75%, transparent);
     color: var(--moon);
     font-size: var(--step--1);
     font-weight: 600;

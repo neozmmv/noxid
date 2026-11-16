@@ -26,8 +26,13 @@
   src: url("./assets/fonts/inter/Inter-SemiBold.woff2") format("woff2");
 }
 
-:root {
-  /* Night palette: the app is named for it, so there is no light theme. */
+/* Themes, chosen in Settings (lib/theme.svelte.ts sets data-theme on the
+   root). Night is the default. Every theme is dark: the app is named for
+   the night. Each block also works on any element, which is how the theme
+   picker draws each preview in its own colours. */
+:root,
+[data-theme="night"] {
+  /* Night palette: violet-black, the app's own. */
   --ink: #06030e;
   --dusk: #090423;
   /* Controls sit on a violet a step up from the night; hairlines a step
@@ -41,15 +46,57 @@
   --dusk-hover: #0a177b;
   --moon: #f3f1fa;
   --mist: #aeaad6;
-  --lamp: #f6b94a;
+  /* Over pictures and video: the panel, see-through. */
+  --veil: rgb(9 4 35 / 0.85);
+}
+
+/* Smoke: neutral graphite, lighter than the night, nothing violet. */
+[data-theme="smoke"] {
+  --ink: #1b1b1e;
+  --dusk: #212125;
+  --dusk-raised: #34343a;
+  --panel: #26262a;
+  --surface: #2d2d32;
+  --line: #3d3d44;
+  --dusk-hover: #45454d;
+  --moon: #f1f1f3;
+  --mist: #a8a8b2;
+  --veil: rgb(33 33 37 / 0.85);
+}
+
+/* Midnight: almost black, a whisper of grey, for the darkest room. */
+[data-theme="midnight"] {
+  --ink: #030304;
+  --dusk: #08080a;
+  --dusk-raised: #19191d;
+  --panel: #0a0a0c;
+  --surface: #101013;
+  --line: #222227;
+  --dusk-hover: #26262c;
+  --moon: #ececef;
+  --mist: #9b9ba5;
+  --veil: rgb(8 8 10 / 0.85);
+}
+
+:root {
+  /* Noxid's own gold, from the app icon. It never changes: the mark in the
+     titlebar keeps it whatever accent is chosen. */
+  --gold: #f6b94a;
+  /* The accent, the gold unless another is chosen (see the accents below).
+     Its hover and its faint tint are derived here, on the root, so they
+     follow whichever accent the root carries. */
+  --lamp: var(--gold);
+  --lamp-hover: color-mix(in srgb, var(--lamp), white 22%);
+  --lamp-tint: color-mix(in srgb, var(--lamp) 12%, transparent);
   --signal: #dc3641;
   --focus: #9fb4ff;
   /* Status dots: green for online, yellow for away, the signal red for do
      not disturb. */
   --status-online: #3ecf7a;
   --status-away: #f2cf3c;
-  /* Behind dialogs: the night, thickened. */
-  --scrim: rgb(4 2 12 / 0.72);
+  /* Behind dialogs: the theme's deepest tone, thickened. Derived here, on
+     the root, so it follows whichever theme the root carries. */
+  --scrim: color-mix(in srgb, var(--ink) 72%, transparent);
 
   /* Layout: the navigation rail, cards and fields, on a 4px grid. */
   --rail-w: 68px;
@@ -80,6 +127,35 @@
   line-height: 1.45;
   color: var(--moon);
   background: var(--ink);
+}
+
+/* Accents, chosen in Settings beside the theme and kept across themes
+   (lib/theme.svelte.ts sets data-accent on the root). Each is light enough
+   to carry the night's dark text when it fills a button or a badge, and
+   none is green or red, which mean online and do not disturb. After the
+   root's gold, so a chosen accent wins. */
+[data-accent="gold"] {
+  --lamp: var(--gold);
+}
+
+[data-accent="sky"] {
+  --lamp: #7cc4fa;
+}
+
+[data-accent="lilac"] {
+  --lamp: #b8a1ff;
+}
+
+[data-accent="rose"] {
+  --lamp: #f590ba;
+}
+
+[data-accent="teal"] {
+  --lamp: #4ccfd0;
+}
+
+[data-accent="sand"] {
+  --lamp: #dcc29b;
 }
 
 * {
@@ -132,10 +208,19 @@ button {
   outline-offset: 2px;
 }
 
+/* Changing theme crossfades the whole window (lib/theme.svelte.ts). */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: var(--dur-open);
+  animation-timing-function: var(--ease);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
-  *::after {
+  *::after,
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
   }
@@ -206,7 +291,7 @@ select.field option {
 }
 
 .button.primary:hover:not(:disabled) {
-  background: #ffc964;
+  background: var(--lamp-hover);
 }
 
 .button.danger {

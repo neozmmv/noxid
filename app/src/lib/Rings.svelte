@@ -123,7 +123,7 @@
   }
 
   .accept:hover {
-    background: #ffc964;
+    background: var(--lamp-hover);
   }
 
   .decline {

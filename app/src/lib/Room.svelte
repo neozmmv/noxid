@@ -34,7 +34,16 @@
 
   // Room is only mounted while there is a room.
   const room = $derived(snapshot.room!);
-  const members = $derived(room.members);
+  // Ourselves first, everyone else in the order they joined: the first
+  // circle is always you, so it needs no label to be found.
+  const members = $derived([...room.members].sort((a, b) => Number(b.is_self) - Number(a.is_self)));
+  // Whether someone else goes by our name, the one case where the first
+  // place is not enough to tell us apart and our circle says "(You)".
+  const sharesName = $derived.by(() => {
+    const same = (name: string) => name.trim().toLocaleLowerCase();
+    const self = members.find((m) => m.is_self);
+    return !!self && members.some((m) => !m.is_self && same(m.name) === same(self.name));
+  });
 
   // A sound when someone comes in or goes. The roster we arrive to is taken
   // as it is, and our own leaving unmounts all this, so neither makes one.
@@ -382,6 +391,7 @@
       {#each members as member (member.id)}
         <Orb
           {member}
+          markSelf={member.is_self && sharesName}
           micOn={snapshot.mic_on}
           small={!!focused}
           focused={focused?.id === member.id}
@@ -832,7 +842,7 @@
   }
 
   .mic.on:hover {
-    background: #ffc964;
+    background: var(--lamp-hover);
   }
 
   .spacer {
