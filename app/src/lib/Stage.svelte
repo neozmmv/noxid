@@ -279,7 +279,7 @@
     margin: 1rem;
     padding: 0.5rem 0.75rem;
     border-radius: 14px;
-    background: rgb(9 4 35 / 0.85);
+    background: var(--veil);
     transition: opacity var(--dur-quick) var(--ease);
   }
 

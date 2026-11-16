@@ -26,8 +26,13 @@
   src: url("./assets/fonts/inter/Inter-SemiBold.woff2") format("woff2");
 }
 
-:root {
-  /* Night palette: the app is named for it, so there is no light theme. */
+/* Themes, chosen in Settings (lib/theme.svelte.ts sets data-theme on the
+   root). Night is the default. Every theme is dark: the app is named for
+   the night. Each block also works on any element, which is how the theme
+   picker draws each preview in its own colours. */
+:root,
+[data-theme="night"] {
+  /* Night palette: violet-black, the app's own. */
   --ink: #06030e;
   --dusk: #090423;
   /* Controls sit on a violet a step up from the night; hairlines a step
@@ -41,6 +46,39 @@
   --dusk-hover: #0a177b;
   --moon: #f3f1fa;
   --mist: #aeaad6;
+  /* Over pictures and video: the panel, see-through. */
+  --veil: rgb(9 4 35 / 0.85);
+}
+
+/* Dark gray: neutral graphite, lighter than the night, nothing violet. */
+[data-theme="gray"] {
+  --ink: #1b1b1e;
+  --dusk: #212125;
+  --dusk-raised: #34343a;
+  --panel: #26262a;
+  --surface: #2d2d32;
+  --line: #3d3d44;
+  --dusk-hover: #45454d;
+  --moon: #f1f1f3;
+  --mist: #a8a8b2;
+  --veil: rgb(33 33 37 / 0.85);
+}
+
+/* Midnight: almost black, a whisper of grey, for the darkest room. */
+[data-theme="midnight"] {
+  --ink: #030304;
+  --dusk: #08080a;
+  --dusk-raised: #19191d;
+  --panel: #0a0a0c;
+  --surface: #101013;
+  --line: #222227;
+  --dusk-hover: #26262c;
+  --moon: #ececef;
+  --mist: #9b9ba5;
+  --veil: rgb(8 8 10 / 0.85);
+}
+
+:root {
   --lamp: #f6b94a;
   --signal: #dc3641;
   --focus: #9fb4ff;
@@ -48,8 +86,9 @@
      not disturb. */
   --status-online: #3ecf7a;
   --status-away: #f2cf3c;
-  /* Behind dialogs: the night, thickened. */
-  --scrim: rgb(4 2 12 / 0.72);
+  /* Behind dialogs: the theme's deepest tone, thickened. Derived here, on
+     the root, so it follows whichever theme the root carries. */
+  --scrim: color-mix(in srgb, var(--ink) 72%, transparent);
 
   /* Layout: the navigation rail, cards and fields, on a 4px grid. */
   --rail-w: 68px;
@@ -132,10 +171,19 @@ button {
   outline-offset: 2px;
 }
 
+/* Changing theme crossfades the whole window (lib/theme.svelte.ts). */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: var(--dur-open);
+  animation-timing-function: var(--ease);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
-  *::after {
+  *::after,
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
   }

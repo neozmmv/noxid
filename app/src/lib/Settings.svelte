@@ -5,6 +5,7 @@
   import NameField from "./NameField.svelte";
   import ProfilePicture from "./ProfilePicture.svelte";
   import StatusPicker from "./StatusPicker.svelte";
+  import ThemePicker from "./ThemePicker.svelte";
   import type { Snapshot } from "./types";
 
   let { snapshot }: { snapshot: Snapshot } = $props();
@@ -32,6 +33,11 @@
   <section class="card">
     <h2 id="status-heading">Status</h2>
     <StatusPicker status={snapshot.status} labelledby="status-heading" />
+  </section>
+
+  <section class="card">
+    <h2 id="theme-heading">Theme</h2>
+    <ThemePicker labelledby="theme-heading" />
   </section>
 
   <section class="card">
