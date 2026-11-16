@@ -8,6 +8,8 @@
   // speak, which is the whole point of a voice-first call: you see who it is.
   interface Props {
     member: MemberView;
+    /** Adds "(You)" to our own name, for when someone else shares it. */
+    markSelf?: boolean;
     micOn?: boolean;
     small?: boolean;
     focused?: boolean;
@@ -21,6 +23,7 @@
 
   let {
     member,
+    markSelf = false,
     micOn = true,
     small = false,
     focused = false,
@@ -120,7 +123,7 @@
     {/if}
   </span>
   <span class="name">
-    {member.name}{#if member.is_self}<span class="you"> (You)</span>{/if}
+    {member.name}{#if markSelf}<span class="you"> (You)</span>{/if}
   </span>
   <span class="status">
     {#if member.is_coordinator}Host{/if}{#if member.is_coordinator && status}&nbsp;· {/if}{status}
