@@ -32,12 +32,12 @@
 </script>
 
 <span class="chip">
+  <!-- Both laid out, one over the other, so the chip keeps its size and the
+       buttons their place whichever is showing. -->
   <code title={hidden ? undefined : id}>
-    {#if hidden}
-      <span aria-hidden="true">••••••••…••••••</span><span class="visually-hidden">{label} hidden</span>
-    {:else}
-      {short}
-    {/if}
+    <span class="plain" class:gone={hidden} aria-hidden={hidden}>{short}</span>
+    <span class="mask" class:gone={!hidden} aria-hidden="true">••••••••••••••</span>
+    {#if hidden}<span class="visually-hidden">{label} hidden</span>{/if}
   </code>
   {#if masked}
     <button
@@ -67,13 +67,27 @@
     background: var(--ink);
   }
 
+  /* Takes the chip's free width, so where the chip is stretched across a
+     card the buttons still sit at its right edge. */
   code {
+    flex: 1;
+    min-width: 0;
+    display: grid;
+    margin-right: 4px;
     font-size: var(--step--1);
     color: var(--mist);
     white-space: nowrap;
+  }
+
+  .plain,
+  .mask {
+    grid-area: 1 / 1;
     overflow: hidden;
     text-overflow: ellipsis;
-    margin-right: 4px;
+  }
+
+  .gone {
+    visibility: hidden;
   }
 
   .icon {
