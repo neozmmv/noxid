@@ -1,4 +1,5 @@
 <script lang="ts">
+  import HeadphoneOff from "@lucide/svelte/icons/headphone-off";
   import MicOff from "@lucide/svelte/icons/mic-off";
   import { avatarUrl } from "./avatars.svelte";
   import { REMOTE_THRESHOLD, fromDb, prefs, voice } from "./levels.svelte";
@@ -8,6 +9,9 @@
   // speak, which is the whole point of a voice-first call: you see who it is.
   interface Props {
     member: MemberView;
+    /** Whether we have deafened ourselves; only known for our own circle,
+     *  since peers are not told. */
+    deafened?: boolean;
     /** Adds "(You)" to our own name, for when someone else shares it. */
     markSelf?: boolean;
     micOn?: boolean;
@@ -23,6 +27,7 @@
 
   let {
     member,
+    deafened = false,
     markSelf = false,
     micOn = true,
     small = false,
@@ -50,6 +55,8 @@
   const picture = $derived(avatarUrl(member.avatar));
 
   const micOff = $derived(member.is_self ? !micOn : member.connected && !member.has_audio);
+  // Deafening turns the mic off too, so it outranks "Mic off" on our circle.
+  const deaf = $derived(member.is_self && deafened);
   const mutedByMe = $derived(!member.is_self && member.voice_muted);
   const connecting = $derived(!member.is_self && !member.connected);
 
@@ -78,7 +85,9 @@
   const status = $derived(
     connecting
       ? "Connecting…"
-      : micOff
+      : deaf
+        ? "Deafened"
+        : micOff
         ? "Mic off"
         : mutedByMe
           ? "Muted for you"
@@ -118,7 +127,11 @@
     {/if}
     {#if micOff || mutedByMe}
       <span class="badge" class:mine={mutedByMe && !micOff} aria-hidden="true">
-        <MicOff size={small ? 11 : 14} strokeWidth={2.5} />
+        {#if deaf}
+          <HeadphoneOff size={small ? 11 : 14} strokeWidth={2.5} />
+        {:else}
+          <MicOff size={small ? 11 : 14} strokeWidth={2.5} />
+        {/if}
       </span>
     {/if}
   </span>
@@ -126,7 +139,7 @@
     {member.name}{#if markSelf}<span class="you"> (You)</span>{/if}
   </span>
   <span class="status">
-    {#if member.is_coordinator}Host{/if}{#if member.is_coordinator && status}&nbsp;· {/if}{status}
+    {#if member.is_coordinator}Host{/if}{#if member.is_coordinator && status}{" · "}{/if}{status}
   </span>
 </svelte:element>
 

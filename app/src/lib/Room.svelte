@@ -392,6 +392,7 @@
         <Orb
           {member}
           markSelf={member.is_self && sharesName}
+          deafened={member.is_self && snapshot.deafened}
           micOn={snapshot.mic_on}
           small={!!focused}
           focused={focused?.id === member.id}
