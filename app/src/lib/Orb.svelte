@@ -74,15 +74,15 @@
 
   const status = $derived(
     connecting
-      ? "connecting…"
+      ? "Connecting…"
       : micOff
-        ? "mic off"
+        ? "Mic off"
         : mutedByMe
-          ? "muted for you"
+          ? "Muted for you"
           : member.has_video
-            ? "sharing"
+            ? "Sharing"
             : member.has_camera
-              ? "camera on"
+              ? "Camera on"
               : "",
   );
 
@@ -105,7 +105,7 @@
   data-drop-peer={dropTarget ? member.id : undefined}
   onclick={onselect}
   oncontextmenu={contextmenu}
-  aria-label={`${member.name}${member.is_self ? " (you)" : ""}${status ? `, ${status}` : ""}${speaking ? ", speaking" : ""}`}
+  aria-label={`${member.name}${member.is_self ? " (You)" : ""}${status ? `, ${status}` : ""}${speaking ? ", Speaking" : ""}`}
 >
   <span class="face">
     {#if picture}
@@ -120,10 +120,10 @@
     {/if}
   </span>
   <span class="name">
-    {member.name}{#if member.is_self}<span class="you"> (you)</span>{/if}
+    {member.name}{#if member.is_self}<span class="you"> (You)</span>{/if}
   </span>
   <span class="status">
-    {#if member.is_coordinator}host{/if}{#if member.is_coordinator && status}, {/if}{status}
+    {#if member.is_coordinator}Host{/if}{#if member.is_coordinator && status}&nbsp;· {/if}{status}
   </span>
 </svelte:element>
 
