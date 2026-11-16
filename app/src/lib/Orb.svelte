@@ -126,7 +126,7 @@
     {member.name}{#if markSelf}<span class="you"> (You)</span>{/if}
   </span>
   <span class="status">
-    {#if member.is_coordinator}Host{/if}{#if member.is_coordinator && status}&nbsp;· {/if}{status}
+    {#if member.is_coordinator}Host{/if}{#if member.is_coordinator && status}{" · "}{/if}{status}
   </span>
 </svelte:element>
 
