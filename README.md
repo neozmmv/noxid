@@ -69,6 +69,14 @@ to build from a checkout, and `--uninstall`/`-Uninstall`.
 - Being friends lets nobody into a room on its own: only the host's own
   invite, carried by a ring, does.
 
+## Custom Relay
+
+Noxid lets you use a custom [iroh-relay](https://github.com/n0-computer/iroh/tree/main/iroh-relay). If the default iroh relays are blocked by your firewall or network (happens mostly on corporate / university networks, not residential), try using my free relay at:
+
+```
+https://relay.neozmmv.dev
+```
+
 ## Build from source
 
 You need Rust 1.91 or newer and [Bun](https://bun.sh) 1.4 or newer. The
