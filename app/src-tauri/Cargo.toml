@@ -14,7 +14,9 @@ tauri-build = { version = "2.5", features = [] }
 
 [dependencies]
 noxid-core.workspace = true
-iroh.workspace = true
+# The net report tells the custom relay check whether QUIC address discovery
+# worked. Same release as the workspace's; only the feature is added.
+iroh = { workspace = true, features = ["unstable-net-report"] }
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
