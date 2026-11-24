@@ -145,6 +145,7 @@ async fn call(name: String, test_mic: bool, muted: bool, stats: bool) -> Result<
         start_muted: muted,
         mic_device: None,
         output_device: None,
+        custom_relay: None,
     })
     .await?;
     println!("node {} ready; type `help`", node.id());

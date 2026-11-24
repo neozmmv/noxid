@@ -3,6 +3,7 @@
 //! loopback socket in [`frames`].
 
 mod frames;
+mod relay;
 
 use std::path::PathBuf;
 
@@ -31,6 +32,9 @@ struct Profile {
     /// The status friends see.
     #[serde(default)]
     status: Status,
+    /// A relay to use beside n0's.
+    #[serde(default)]
+    custom_relay: Option<String>,
 }
 
 /// How often voice levels are pushed to the webview for the speaking
@@ -108,7 +112,29 @@ fn remember(node: &Node) {
         output_device: snapshot.output_device,
         screen_audio: Some(snapshot.screen_audio),
         status: snapshot.status,
+        custom_relay: snapshot.custom_relay,
     });
+}
+
+/// Uses `url` as a relay beside n0's, or stops using one with `None`. A URL
+/// that does not parse is refused with a message for the field.
+#[tauri::command]
+async fn set_custom_relay(state: tauri::State<'_, AppState>, url: Option<String>) -> CommandResult<()> {
+    let url = url
+        .filter(|text| !text.trim().is_empty())
+        .map(|text| noxid_core::relay::parse(&text))
+        .transpose()?;
+    let node = node(&state).await?;
+    node.set_custom_relay(url).await;
+    remember(&node);
+    Ok(())
+}
+
+/// Checks that `url` is a working iroh relay; see [`relay`].
+#[tauri::command]
+async fn check_relay(url: String) -> CommandResult<relay::RelayHealth> {
+    let url = noxid_core::relay::parse(&url)?;
+    Ok(relay::check(url).await)
 }
 
 #[tauri::command]
@@ -686,6 +712,13 @@ pub fn run() {
                         start_muted: false,
                         mic_device: profile.mic_device,
                         output_device: profile.output_device,
+                        // A saved URL that no longer parses is dropped rather
+                        // than keeping the node from starting.
+                        custom_relay: profile.custom_relay.as_deref().and_then(|text| {
+                            noxid_core::relay::parse(text)
+                                .inspect_err(|e| tracing::warn!("ignoring the saved custom relay: {e}"))
+                                .ok()
+                        }),
                     };
                     let node = Node::spawn(config).await?;
                     if let Some(on) = profile.screen_audio {
@@ -734,6 +767,8 @@ pub fn run() {
             set_avatar,
             set_animated_avatar,
             set_status,
+            set_custom_relay,
+            check_relay,
             clear_avatar,
             avatar,
             share_camera,

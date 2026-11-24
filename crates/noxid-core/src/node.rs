@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use iroh::{Endpoint, EndpointId, SecretKey, endpoint::presets, protocol::Router};
+use iroh::{Endpoint, EndpointId, RelayUrl, SecretKey, endpoint::presets, protocol::Router};
 use iroh_live::{
     Live,
     media::{frame_channel::FrameReceiver, publish::LocalBroadcast, video::Frame},
@@ -26,6 +26,7 @@ use crate::friends::{self, FriendEvent, Friends, FriendsConfig, RingOutcome, Tim
 use crate::audio::{self, SystemAudio, Voice};
 use crate::gate::MemberGate;
 use crate::media::{self, CameraSource, Framerate, Mic, Outgoing, Quality, Screen};
+use crate::relay::CustomRelay;
 use crate::room::{self, Code, Member, Room};
 
 /// How long a node waits for a relay at startup before carrying on. Until it
@@ -150,6 +151,8 @@ pub struct Snapshot {
     pub camera_device: Option<String>,
     /// Files being offered, sent or received, and recently finished ones.
     pub transfers: Vec<TransferView>,
+    /// The relay of our own used beside n0's, if one is set.
+    pub custom_relay: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -225,6 +228,8 @@ pub struct NodeConfig {
     pub start_muted: bool,
     pub mic_device: Option<String>,
     pub output_device: Option<String>,
+    /// A relay to use beside n0's. `None` leaves the endpoint as n0 sets it.
+    pub custom_relay: Option<RelayUrl>,
 }
 
 /// Someone waiting at the door, and the way to answer them.
@@ -310,6 +315,8 @@ pub(crate) struct Inner {
     sensitivity: audio::Sensitivity,
     /// File transfers, in and out.
     pub(crate) transfers: Transfers,
+    /// The relay of our own in the endpoint's relay map, if any.
+    custom_relay: CustomRelay,
     /// The current roster's ids, which the mesh follows.
     pub roster_tx: watch::Sender<Vec<EndpointId>>,
     /// When the host last spoke to us, for noticing it has gone quiet.
@@ -402,6 +409,7 @@ impl Node {
             deafened: std::sync::atomic::AtomicBool::new(false),
             sensitivity: audio::Sensitivity::default(),
             transfers: Transfers::default(),
+            custom_relay: CustomRelay::default(),
             roster_tx,
             last_heard_host: Mutex::new(Instant::now()),
             changed: watch::channel(0).0,
@@ -446,6 +454,12 @@ impl Node {
         tokio::spawn(admin::drop_absent(inner.clone()));
         tokio::spawn(avatar::run(inner.clone()));
         tokio::spawn(forward_friend_events(inner.clone()));
+
+        // Before waiting to come online, so a home relay can be found through
+        // it where n0's are blocked.
+        if config.custom_relay.is_some() {
+            inner.custom_relay.set(&endpoint, config.custom_relay).await;
+        }
 
         match tokio::time::timeout(ONLINE_TIMEOUT, endpoint.online()).await {
             Ok(()) => info!("online"),
@@ -1029,6 +1043,13 @@ impl Node {
         Ok(())
     }
 
+    /// Uses `url` beside n0's relays from now on, or stops using the one set
+    /// with `None`. Takes effect at once; see [`crate::relay`].
+    pub async fn set_custom_relay(&self, url: Option<RelayUrl>) {
+        self.inner.custom_relay.set(&self.inner.endpoint, url).await;
+        self.inner.bump();
+    }
+
     pub async fn shutdown(&self) {
         self.leave().await;
         self.inner.live.shutdown().await;
@@ -1475,6 +1496,7 @@ impl Inner {
             camera_on: local.camera.is_some(),
             camera_device: local.camera.as_ref().map(|c| c.id.clone()),
             transfers: self.transfers.views(),
+            custom_relay: self.custom_relay.url().map(|url| url.to_string()),
         }
     }
 

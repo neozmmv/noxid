@@ -5,6 +5,7 @@
   import IdChip from "./IdChip.svelte";
   import NameField from "./NameField.svelte";
   import ProfilePicture from "./ProfilePicture.svelte";
+  import RelaySettings from "./RelaySettings.svelte";
   import StatusPicker from "./StatusPicker.svelte";
   import ThemePicker from "./ThemePicker.svelte";
   import type { Snapshot } from "./types";
@@ -51,6 +52,11 @@
   <section class="card">
     <h2>Audio</h2>
     <AudioSettingsPanel {snapshot} />
+  </section>
+
+  <section class="card">
+    <h2>Custom relay</h2>
+    <RelaySettings {snapshot} />
   </section>
 </div>
 
