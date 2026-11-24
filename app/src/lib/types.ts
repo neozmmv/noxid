@@ -81,7 +81,12 @@ export interface Snapshot {
   camera_device: string | null;
   /** Files being offered, sent or received, and recently finished ones. */
   transfers: TransferView[];
+  /** The relay of our own used beside the default ones, if set. */
+  custom_relay: string | null;
 }
+
+/** What the custom relay check found. */
+export type RelayHealth = "good" | "no_address_discovery" | "unreachable";
 
 export type TransferState =
   /** Sending: waiting for them to accept. */
