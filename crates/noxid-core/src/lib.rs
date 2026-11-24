@@ -15,6 +15,7 @@ pub mod log;
 pub mod media;
 mod mesh;
 mod node;
+pub mod relay;
 pub mod room;
 mod rpc;
 #[cfg(windows)]
