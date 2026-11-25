@@ -70,7 +70,7 @@ commands:
   pcsound <on|off>          include the PC's sound when sharing
   volume <who> <voice|screen> <percent> [muted]   how loud you hear someone (voice up to 200, screen up to 100)
   status                    print the room
-  id                        print your Noxid ID (what friends add you by)
+  id                        print your Noxid ID and friend code (what friends add you by)
   friends                   list friends, requests and rings
   friend add <id>           send a friend request
   friend accept <who>       accept a request (who: id, id prefix or name)
@@ -284,7 +284,7 @@ async fn run_command(node: &Node, line: &str) -> Result<()> {
             let muted = parts.next() == Some("muted");
             node.set_peer_audio(member_id(node, who)?.parse()?, stream, volume, muted);
         }
-        "id" => println!("{}", node.id()),
+        "id" => println!("{}\nfriend code: {}", node.id(), node.friend_code()),
         "friends" => print_friends(&node.friends().view()),
         "friend" => friend_command(node, rest).await?,
         other => println!("unknown command {other:?}; type `help`"),
@@ -342,7 +342,7 @@ fn friend_peer(node: &Node, query: &str) -> Result<iroh::EndpointId> {
             return Ok(id.parse()?);
         }
     }
-    parse_friend_id(query, node.id())
+    Ok(parse_friend_id(query, node.id())?.id)
 }
 
 fn print_friends(view: &FriendsView) {

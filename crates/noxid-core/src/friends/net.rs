@@ -18,7 +18,8 @@ use tracing::debug;
 
 use super::wire::{FRIENDS_ALPN, FriendMsg, FriendReply, MAX_MESSAGE, RequestId};
 use super::{Calling, FriendEvent, IncomingRing, RingOutcome, Shared, now_ms};
-use crate::room::Code;
+use crate::address_book::Source;
+use crate::room::{Code, parse_relay};
 use crate::rpc;
 
 /// Inbound friends connections handled at once; beyond that they are turned
@@ -119,6 +120,36 @@ impl Shared {
         }
     }
 
+    /// Our home relay, as it goes on the wire.
+    fn own_relay(&self) -> Option<String> {
+        self.relay.borrow().as_ref().map(ToString::to_string)
+    }
+
+    /// Takes the home relay `peer` sent (or its code named): kept on its
+    /// record, saved when it changed, and put in the address book so the
+    /// next dial goes straight there. Only for peers we keep a record of:
+    /// a stranger's word grows nothing we hold.
+    async fn learn_relay(&self, peer: EndpointId, relay: Option<&str>, source: Source) {
+        let Some(url) = relay.and_then(parse_relay) else {
+            return;
+        };
+        let (known, changed) = {
+            let mut book = self.book.lock().unwrap();
+            let known = book.record(&peer).is_some();
+            (known, book.set_relay(&peer, relay).is_some())
+        };
+        if !known {
+            return;
+        }
+        self.address_book.insert(peer, url, source);
+        if changed && self.problem.is_none() {
+            debug!(peer = %peer.fmt_short(), %source, "friend's relay changed; saving it");
+            if let Err(e) = self.persist().await {
+                tracing::warn!("could not save the friends list: {e:#}");
+            }
+        }
+    }
+
     fn contact_failed(&self, peer: EndpointId) {
         self.links.lock().unwrap().entry(peer).or_default().last_fail = Some(now_ms());
     }
@@ -178,6 +209,15 @@ async fn on_message(shared: &Shared, peer: EndpointId, msg: &FriendMsg) -> Frien
     if after.is_some() {
         shared.contact_ok(peer);
     }
+    let source = match msg {
+        FriendMsg::Request { .. } => Some(Source::Request),
+        FriendMsg::Accept { .. } => Some(Source::Accept),
+        FriendMsg::Ping { .. } => Some(Source::Ping),
+        _ => None,
+    };
+    if let Some(source) = source {
+        shared.learn_relay(peer, msg.relay(), source).await;
+    }
     if let FriendMsg::Ping { status, .. } = msg
         && matches!(reply, FriendReply::Pong { .. })
     {
@@ -192,8 +232,11 @@ async fn on_message(shared: &Shared, peer: EndpointId, msg: &FriendMsg) -> Frien
             name: shared.name.borrow().clone(),
             avatar: shared.avatar.borrow().clone(),
             status: *shared.status.borrow(),
+            relay: shared.own_relay(),
         };
     }
+    let mut reply = reply;
+    reply.set_relay(shared.own_relay());
     reply
 }
 
@@ -212,14 +255,19 @@ async fn on_ring(
     }
     // Only an invite to the caller's own room: a friend cannot ring us into
     // somebody else's.
-    match Code::decode(&code) {
-        Ok(Code::Invite { coordinator, .. }) if coordinator == peer => {}
+    let relay = match Code::decode(&code) {
+        Ok(Code::Invite { coordinator, relay, .. }) if coordinator == peer => relay,
         _ => {
             return Some(FriendReply::Error {
                 message: "a ring must carry an invite to the caller's own room".into(),
             });
         }
-    }
+    };
+    // Before anything is answered, so joining the room dials them straight
+    // through their relay (joining puts the code's relay in the book too).
+    shared
+        .learn_relay(peer, relay.map(|r| r.to_string()).as_deref(), Source::Ring)
+        .await;
     let room_name = room_name.map(|n| n.chars().filter(|c| !c.is_control()).take(48).collect());
     let (answer, answered) = tokio::sync::oneshot::channel();
     {
@@ -331,7 +379,10 @@ pub(super) async fn ring(
 /// Delivers what we owe `peer`, once.
 async fn deliver(shared: Arc<Shared>, peer: EndpointId) {
     let name = shared.name.borrow().clone();
-    let msg = shared.book.lock().unwrap().pending(&peer, &name);
+    let mut msg = shared.book.lock().unwrap().pending(&peer, &name);
+    if let Some(msg) = &mut msg {
+        msg.set_relay(shared.own_relay());
+    }
     if let Some(msg) = msg {
         let _permit = shared.dials.acquire().await;
         let result = rpc::call::<_, FriendReply>(
@@ -347,6 +398,9 @@ async fn deliver(shared: Arc<Shared>, peer: EndpointId) {
             Ok(reply) => {
                 shared.contact_ok(peer);
                 shared.apply_reply(peer, &msg, &reply).await;
+                if matches!(reply, FriendReply::Accepted { .. }) {
+                    shared.learn_relay(peer, reply.relay(), Source::Accepted).await;
+                }
                 matches!(reply, FriendReply::Busy | FriendReply::Error { .. }).then(|| format!("{reply:?}"))
             }
             Err(e) => {
@@ -381,8 +435,9 @@ async fn probe(shared: Arc<Shared>, peer: EndpointId) {
     let name = shared.name.borrow().clone();
     let avatar = shared.avatar.borrow().clone();
     let mut msg = shared.book.lock().unwrap().ping(&peer, &name, avatar.as_deref());
-    if let Some(FriendMsg::Ping { status, .. }) = &mut msg {
+    if let Some(FriendMsg::Ping { status, relay, .. }) = &mut msg {
         *status = *shared.status.borrow();
+        *relay = shared.own_relay();
     }
     let mut ok = false;
     if let Some(msg) = msg {
@@ -409,6 +464,9 @@ async fn probe(shared: Arc<Shared>, peer: EndpointId) {
                     }
                 }
                 shared.apply_reply(peer, &msg, &reply).await;
+                if matches!(reply, FriendReply::Pong { .. }) {
+                    shared.learn_relay(peer, reply.relay(), Source::Pong).await;
+                }
             }
             Err(e) => {
                 debug!(%peer, "friend probe failed: {e:#}");

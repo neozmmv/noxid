@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use iroh::EndpointId;
 use noxid_core::media::{self, Mic, Quality, Screen};
 use noxid_core::audio::AudioDevice;
-use noxid_core::friends::{FriendsView, RingOutcome, Status, parse_friend_id};
+use noxid_core::friends::{FriendId, FriendsView, RingOutcome, Status, parse_friend_id};
 use noxid_core::{LeaveMode, Node, NodeConfig, QualityMode, Snapshot, Stream};
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager, RunEvent};
@@ -554,6 +554,11 @@ async fn set_peer_quality(
 
 /// A Noxid ID from the webview, checked here whatever the webview checked.
 fn friend_id(node: &Node, text: &str) -> CommandResult<EndpointId> {
+    Ok(friend_addr(node, text)?.id)
+}
+
+/// The same, keeping the relay a friend code names.
+fn friend_addr(node: &Node, text: &str) -> CommandResult<FriendId> {
     parse_friend_id(text, node.id()).map_err(|e| format!("{e:#}"))
 }
 
@@ -569,10 +574,11 @@ async fn check_friend_id(state: tauri::State<'_, AppState>, text: String) -> Com
     Ok(friend_id(&node, &text)?.to_string())
 }
 
+/// `id` is what was pasted, so a friend code's relay is kept.
 #[tauri::command]
 async fn send_friend_request(state: tauri::State<'_, AppState>, id: String) -> CommandResult<()> {
     let node = node(&state).await?;
-    let peer = friend_id(&node, &id)?;
+    let peer = friend_addr(&node, &id)?;
     node.friends().send_request(peer).await.map_err(|e| format!("{e:#}"))
 }
 

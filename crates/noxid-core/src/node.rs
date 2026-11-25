@@ -115,6 +115,9 @@ impl PeerAudio {
 #[derive(Debug, Clone, Serialize)]
 pub struct Snapshot {
     pub id: String,
+    /// What to share so others can add us as a friend: our id and current
+    /// home relay, in the room code format.
+    pub friend_code: String,
     pub name: String,
     /// Our profile picture's hash, to fetch with `avatar`.
     pub avatar: Option<String>,
@@ -285,6 +288,8 @@ pub(crate) struct Inner {
     avatar_watch: watch::Sender<Option<String>>,
     /// The status we show friends.
     status_watch: watch::Sender<friends::Status>,
+    /// Our home relay, for the friends list to send with its messages.
+    relay_watch: watch::Sender<Option<RelayUrl>>,
     /// Copies of other members' pictures.
     pub(crate) avatars: Mutex<Avatars>,
     pub room: Mutex<Room>,
@@ -368,12 +373,15 @@ impl Node {
         let own_avatar = avatar::load_own();
         let (avatar_watch, avatar_rx) = watch::channel(own_avatar.clone());
         let (status_watch, status_rx) = watch::channel(friends::Status::default());
+        let (relay_watch, relay_rx) = watch::channel(endpoint.addr().relay_urls().next().cloned());
         let friends = Friends::spawn(FriendsConfig {
             endpoint: endpoint.clone(),
             store_path: crate::identity::state_dir()?.join("friends.json"),
             name: name_rx,
             avatar: avatar_rx,
             status: status_rx,
+            relay: relay_rx,
+            address_book: address_book.clone(),
             timing: Timing::default(),
         });
         let (roster_tx, roster_rx) = watch::channel(Vec::new());
@@ -387,6 +395,7 @@ impl Node {
             avatar: Mutex::new(own_avatar),
             avatar_watch,
             status_watch,
+            relay_watch,
             avatars: Mutex::new(Avatars::default()),
             room: Mutex::new(Room::default()),
             local: Mutex::new(Local {
@@ -487,6 +496,12 @@ impl Node {
 
     pub fn id(&self) -> EndpointId {
         self.inner.endpoint.id()
+    }
+
+    /// What to share so others can add us as a friend; see
+    /// [`friends::friend_code`].
+    pub fn friend_code(&self) -> String {
+        friends::friend_code(&self.id(), self.inner.home_relay().as_ref())
     }
 
     /// A watch that ticks whenever [`snapshot`](Self::snapshot) would change.
@@ -1106,6 +1121,11 @@ async fn follow_home_relay(inner: Arc<Inner>) {
         }
         info!(relay = ?relay.as_ref().map(ToString::to_string), "home relay changed");
         last = relay.clone();
+        // Friends hear it with their next ping; pinging now makes that soon.
+        inner.relay_watch.send_replace(relay.clone());
+        inner.friends.announce();
+        // The friend code in the snapshot names it.
+        inner.bump();
         let own_id = inner.own_id().to_string();
         let relay = relay.map(|url| url.to_string());
         let (active, is_host, coordinator) = {
@@ -1544,6 +1564,7 @@ impl Inner {
         knocks.sort_by(|a, b| a.id.cmp(&b.id));
 
         Snapshot {
+            friend_code: friends::friend_code(&own_id, self.home_relay().as_ref()),
             id: own,
             name: self.name(),
             avatar: own_avatar,

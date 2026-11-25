@@ -22,13 +22,27 @@ use tracing::debug;
 
 /// Where an address came from, for the log.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Source {
-    /// The room code or invite we joined with.
+pub enum Source {
+    /// A room code, invite or friend code someone pasted.
     Code,
     /// A roster the host sent us, or our own as host.
     Roster,
     /// A join, knock or address update the member sent us as host.
     Member,
+    /// The friends list on disk, read at startup.
+    Saved,
+    /// A friend request someone sent us.
+    Request,
+    /// A friend accepting our request.
+    Accept,
+    /// A reply saying our request was already accepted.
+    Accepted,
+    /// A friend's presence ping.
+    Ping,
+    /// A friend's answer to our ping.
+    Pong,
+    /// The invite in a friend's ring.
+    Ring,
 }
 
 impl std::fmt::Display for Source {
@@ -37,6 +51,13 @@ impl std::fmt::Display for Source {
             Source::Code => "code",
             Source::Roster => "roster",
             Source::Member => "member",
+            Source::Saved => "saved friends list",
+            Source::Request => "friend request",
+            Source::Accept => "friend accept",
+            Source::Accepted => "accepted reply",
+            Source::Ping => "ping",
+            Source::Pong => "pong",
+            Source::Ring => "ring",
         })
     }
 }
@@ -44,7 +65,7 @@ impl std::fmt::Display for Source {
 /// An address lookup answering from what we were told. Cheap to clone; every
 /// clone is the same book.
 #[derive(Debug, Clone)]
-pub(crate) struct AddressBook {
+pub struct AddressBook {
     own: EndpointId,
     memory: MemoryLookup,
     /// Each entry's relay and where it came from: the log line for a dial, and
@@ -66,8 +87,18 @@ impl AddressBook {
 
     /// Records `id`'s home relay, replacing whatever we had for it. Unchanged
     /// entries are skipped quietly: the roster arrives again every few seconds.
+    /// Only https relays are taken, whoever names them.
+    ///
+    /// Replacing is only within the book: iroh adds what each lookup finds
+    /// to a peer's paths and, until one works, sends to all of them, so a
+    /// stale relay here is one dead path beside what pkarr, DNS and mDNS
+    /// find, never instead of it.
     pub fn insert(&self, id: EndpointId, relay: RelayUrl, source: Source) {
         if id == self.own {
+            return;
+        }
+        if relay.scheme() != "https" {
+            debug!(peer = %id.fmt_short(), %relay, %source, "address book: ignored a relay that is not https");
             return;
         }
         let mut known = self.known.lock().unwrap();
@@ -87,7 +118,6 @@ impl AddressBook {
     }
 
     /// The relay we hold for `id`, if any.
-    #[cfg(test)]
     pub fn relay(&self, id: &EndpointId) -> Option<RelayUrl> {
         self.known
             .lock()
@@ -137,6 +167,13 @@ mod tests {
             vec![url("https://b.example.com")],
             "replaced, not added to"
         );
+    }
+
+    #[test]
+    fn only_takes_https_relays() {
+        let book = AddressBook::new(key(1));
+        book.insert(key(2), url("http://10.0.0.1"), Source::Code);
+        assert!(book.relay(&key(2)).is_none());
     }
 
     #[test]

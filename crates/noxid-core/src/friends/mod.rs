@@ -27,10 +27,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Result, bail};
-use iroh::{Endpoint, EndpointId};
+use iroh::{Endpoint, EndpointId, RelayUrl};
 use serde::Serialize;
 use tokio::sync::{Notify, Semaphore, broadcast, oneshot, watch};
 
+use crate::address_book::{self, AddressBook};
 use crate::room::Code;
 pub use net::FriendsHandler;
 use state::{Book, LocalError, Relation, Time};
@@ -104,6 +105,12 @@ pub struct FriendsConfig {
     pub avatar: watch::Receiver<Option<String>>,
     /// The status we chose to show, sent with pings and pongs.
     pub status: watch::Receiver<Status>,
+    /// Our home relay, sent with requests, accepts, pings and their replies
+    /// so friends can reach us without a lookup.
+    pub relay: watch::Receiver<Option<RelayUrl>>,
+    /// Where friends' relays go so dials by id find them: the address book
+    /// registered on `endpoint`.
+    pub address_book: AddressBook,
     pub timing: Timing,
 }
 
@@ -135,26 +142,50 @@ pub enum FriendEvent {
     MissedCall { id: String, name: String },
 }
 
+/// Who a pasted Noxid ID names, and where to reach them if it says.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FriendId {
+    pub id: EndpointId,
+    /// Their home relay when they shared the code; only ever https.
+    pub relay: Option<RelayUrl>,
+}
+
+impl From<EndpointId> for FriendId {
+    fn from(id: EndpointId) -> Self {
+        Self { id, relay: None }
+    }
+}
+
 /// Reads a Noxid ID someone pasted: an endpoint id (hex or base32), or a
-/// room code, which is the same id in base58. Our own id, and room invites,
-/// are refused with a reason.
-pub fn parse_friend_id(text: &str, own: EndpointId) -> Result<EndpointId> {
+/// friend code. A friend code is the same code as a room code: the id and,
+/// in the current format, the home relay. Our own id, and room invites, are
+/// refused with a reason.
+pub fn parse_friend_id(text: &str, own: EndpointId) -> Result<FriendId> {
     let text = text.trim();
     if text.is_empty() {
         bail!("paste a Noxid ID");
     }
-    let id = match text.parse::<EndpointId>() {
-        Ok(id) => id,
+    let parsed = match text.parse::<EndpointId>() {
+        Ok(id) => FriendId { id, relay: None },
         Err(_) => match Code::decode(text) {
-            Ok(Code::Knock { coordinator, .. }) => coordinator,
+            Ok(Code::Knock { coordinator, relay }) => FriendId {
+                id: coordinator,
+                relay: relay.filter(|r| r.scheme() == "https"),
+            },
             Ok(Code::Invite { .. }) => bail!("that's a room invite, not a Noxid ID"),
+            Err(e) if e.to_string().contains("update Noxid") => bail!("{e}"),
             Err(_) => bail!("that's not a Noxid ID"),
         },
     };
-    if id == own {
+    if parsed.id == own {
         bail!("that's your own ID");
     }
-    Ok(id)
+    Ok(parsed)
+}
+
+/// The code to share so others can add us: our id and current home relay.
+pub fn friend_code(own: &EndpointId, relay: Option<&RelayUrl>) -> String {
+    crate::room::room_code(own, relay)
 }
 
 pub(crate) fn now_ms() -> Time {
@@ -209,6 +240,8 @@ pub(crate) struct Shared {
     pub name: watch::Receiver<String>,
     pub avatar: watch::Receiver<Option<String>>,
     pub status: watch::Receiver<Status>,
+    pub relay: watch::Receiver<Option<RelayUrl>>,
+    pub address_book: AddressBook,
     pub book: Mutex<Book>,
     pub store: Store,
     pub problem: Option<String>,
@@ -242,12 +275,19 @@ impl Friends {
         let opened = Store::open(config.store_path, own);
         let mut book = opened.book;
         book.prune(now_ms());
+        // Before anything is dialed, so friends are reached where they were
+        // last, without a lookup.
+        for (peer, relay) in book.relays() {
+            config.address_book.insert(peer, relay, address_book::Source::Saved);
+        }
         let shared = Arc::new(Shared {
             endpoint: config.endpoint,
             timing: config.timing,
             name: config.name,
             avatar: config.avatar,
             status: config.status,
+            relay: config.relay,
+            address_book: config.address_book,
             book: Mutex::new(book),
             store: opened.store,
             problem: opened.problem,
@@ -291,6 +331,11 @@ impl Friends {
         self.shared.book.lock().unwrap().relation(peer).cloned()
     }
 
+    /// Everything we keep about `peer`.
+    pub fn record(&self, peer: &EndpointId) -> Option<state::PeerRecord> {
+        self.shared.book.lock().unwrap().record(peer).cloned()
+    }
+
     /// The name to show for `peer`: our alias, their name, or their short id.
     pub fn display_name(&self, peer: &EndpointId) -> String {
         self.shared.display_name(peer)
@@ -324,8 +369,36 @@ impl Friends {
         self.shared.bump();
     }
 
-    pub async fn send_request(&self, peer: EndpointId) -> Result<()> {
-        self.shared.local(peer, |book, now| book.request(peer, now)).await
+    /// Asks `peer.id` to be friends, keeping the relay its code named so
+    /// the request goes straight there.
+    pub async fn send_request(&self, peer: impl Into<FriendId>) -> Result<()> {
+        let FriendId { id, relay } = peer.into();
+        if let Some(relay) = &relay {
+            self.shared
+                .address_book
+                .insert(id, relay.clone(), address_book::Source::Code);
+        }
+        let relay = relay.map(|r| r.to_string());
+        let named_relay = relay.is_some();
+        let result = self
+            .shared
+            .local(id, |book, now| {
+                let result = book.request(id, now);
+                // Kept even when the request is refused because they are a
+                // friend already: pasting a friend's fresh code is how a
+                // relay that changed while neither of us could tell the
+                // other is learned again.
+                book.set_relay(&id, relay.as_deref());
+                result
+            })
+            .await;
+        if result.is_err() && named_relay && self.shared.problem.is_none() {
+            // `local` stores only what succeeded; the relay is kept anyway.
+            if let Err(e) = self.shared.persist().await {
+                tracing::warn!("could not save the friends list: {e:#}");
+            }
+        }
+        result
     }
 
     /// Accepts or declines `peer`'s request.
@@ -614,5 +687,76 @@ impl Shared {
             missed,
             problem: self.problem.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::room::{Code, N0_RELAYS, Room, room_code};
+
+    fn key(n: u8) -> EndpointId {
+        iroh::SecretKey::from_bytes(&[n; 32]).public()
+    }
+
+    fn relay(url: &str) -> RelayUrl {
+        url.parse().unwrap()
+    }
+
+    #[test]
+    fn a_raw_id_has_no_relay() {
+        for text in [key(2).to_string(), format!("  {}  ", key(2))] {
+            assert_eq!(parse_friend_id(&text, key(1)).unwrap(), FriendId::from(key(2)));
+        }
+    }
+
+    #[test]
+    fn an_old_room_code_still_names_the_id() {
+        let old = bs58::encode(key(2).as_bytes()).into_string();
+        assert_eq!(parse_friend_id(&old, key(1)).unwrap(), FriendId::from(key(2)));
+    }
+
+    #[test]
+    fn a_new_code_names_the_relay_too() {
+        for url in [N0_RELAYS[2], "https://relay.neozmmv.dev"] {
+            let code = friend_code(&key(2), Some(&relay(url)));
+            let parsed = parse_friend_id(&code, key(1)).unwrap();
+            assert_eq!(parsed.id, key(2));
+            assert_eq!(parsed.relay, Some(relay(url)));
+        }
+    }
+
+    #[test]
+    fn a_relay_that_is_not_https_is_dropped() {
+        let code = room_code(&key(2), Some(&relay("http://10.0.0.1")));
+        assert_eq!(parse_friend_id(&code, key(1)).unwrap().relay, None);
+    }
+
+    #[test]
+    fn room_invites_and_our_own_id_are_refused() {
+        let mut room = Room::default();
+        room.create(None, &key(2).to_string(), "host");
+        let (invite, _) = room
+            .generate_invite(key(2), Some(&relay(N0_RELAYS[0])), chrono::Duration::minutes(1), chrono::Utc::now())
+            .unwrap();
+        let err = parse_friend_id(&invite, key(1)).unwrap_err().to_string();
+        assert!(err.contains("invite"), "{err}");
+
+        for own in [key(1).to_string(), friend_code(&key(1), Some(&relay(N0_RELAYS[0])))] {
+            let err = parse_friend_id(&own, key(1)).unwrap_err().to_string();
+            assert!(err.contains("own ID"), "{err}");
+        }
+        assert!(parse_friend_id("hello", key(1)).is_err());
+        assert!(parse_friend_id("", key(1)).is_err());
+    }
+
+    #[test]
+    fn a_friend_code_is_a_room_code() {
+        let url = relay(N0_RELAYS[1]);
+        assert_eq!(friend_code(&key(2), Some(&url)), room_code(&key(2), Some(&url)));
+        assert!(matches!(
+            Code::decode(&friend_code(&key(2), None)).unwrap(),
+            Code::Knock { relay: None, .. }
+        ));
     }
 }

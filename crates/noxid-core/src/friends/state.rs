@@ -20,7 +20,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use iroh::EndpointId;
+use iroh::{EndpointId, RelayUrl};
 use serde::{Deserialize, Serialize};
 
 use super::wire::{CloseReason, FriendMsg, FriendReply, RequestId};
@@ -101,6 +101,11 @@ pub struct PeerRecord {
     /// The hash of their profile picture, as their last ping or pong said.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avatar: Option<String>,
+    /// Their home relay as they last told us (or as the code we added them
+    /// with said), so we can reach them after a restart without a lookup.
+    /// Lists written by older versions have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay: Option<String>,
 }
 
 /// Why a local action was refused. The message is what the user sees.
@@ -208,6 +213,7 @@ impl Book {
                         name: String::new(),
                         alias: None,
                         avatar: None,
+                        relay: None,
                     },
                 );
             }
@@ -243,6 +249,31 @@ impl Book {
         }
         record.avatar = avatar;
         true
+    }
+
+    /// Takes the home relay a peer sent, or that a code named for them.
+    /// Anything but a well-formed https URL is ignored, and so is none at
+    /// all: an older version saying nothing does not erase what we know.
+    /// Returns the relay when it changed.
+    pub fn set_relay(&mut self, peer: &EndpointId, relay: Option<&str>) -> Option<RelayUrl> {
+        let record = self.peers.get_mut(peer)?;
+        let relay = crate::room::parse_relay(relay?)?;
+        let text = relay.to_string();
+        if record.relay.as_deref() == Some(text.as_str()) {
+            return None;
+        }
+        record.relay = Some(text);
+        Some(relay)
+    }
+
+    /// Every peer we keep a record of with a relay we may dial, which the
+    /// address book is filled from at startup.
+    pub fn relays(&self) -> Vec<(EndpointId, RelayUrl)> {
+        self.peers
+            .iter()
+            .filter(|(_, r)| !matches!(r.relation, Relation::Closed { notify: false, .. }))
+            .filter_map(|(peer, r)| Some((*peer, crate::room::parse_relay(r.relay.as_deref()?)?)))
+            .collect()
     }
 
     /// Closes `id`. Closed by us means the peer is owed the news.
@@ -338,10 +369,12 @@ impl Book {
             } => Some(FriendMsg::Request {
                 id: *id,
                 name: own_name.to_string(),
+                relay: None,
             }),
             Relation::Accepting { id, .. } => Some(FriendMsg::Accept {
                 id: *id,
                 name: own_name.to_string(),
+                relay: None,
             }),
             Relation::Closed {
                 id,
@@ -375,6 +408,7 @@ impl Book {
                 name: own_name.to_string(),
                 avatar: own_avatar.map(str::to_string),
                 status: Default::default(),
+                relay: None,
             }),
             _ => None,
         }
@@ -400,8 +434,8 @@ impl Book {
         }
         let current = self.relation(&peer).cloned();
         match msg {
-            FriendMsg::Request { id, name } => self.on_request(peer, *id, name, current, now),
-            FriendMsg::Accept { id, name } => match current {
+            FriendMsg::Request { id, name, .. } => self.on_request(peer, *id, name, current, now),
+            FriendMsg::Accept { id, name, .. } => match current {
                 Some(Relation::Outgoing { id: ours, .. }) if ours == *id => {
                     if self.friend_count() >= MAX_FRIENDS {
                         return FriendReply::Busy;
@@ -442,7 +476,7 @@ impl Book {
                 Some(Relation::Friends { id: ours, .. }) if ours == *id => {
                     self.set_name(&peer, name);
                     self.set_avatar(&peer, avatar.as_deref());
-                    FriendReply::Pong { name: String::new(), avatar: None, status: Default::default() }
+                    FriendReply::Pong { name: String::new(), avatar: None, status: Default::default(), relay: None }
                 }
                 // They only ping once they count us as a friend, so this is
                 // the confirmation our Accept was waiting for.
@@ -450,7 +484,7 @@ impl Book {
                     self.set(peer, Relation::Friends { id: ours, since: now });
                     self.set_name(&peer, name);
                     self.set_avatar(&peer, avatar.as_deref());
-                    FriendReply::Pong { name: String::new(), avatar: None, status: Default::default() }
+                    FriendReply::Pong { name: String::new(), avatar: None, status: Default::default(), relay: None }
                 }
                 Some(Relation::Closed { id: ours, reason, .. }) if ours == *id => FriendReply::Gone { reason },
                 _ => FriendReply::Unknown,
@@ -497,7 +531,7 @@ impl Book {
                     },
                 );
                 self.set_name(&peer, name);
-                FriendReply::Accepted { id: settled }
+                FriendReply::Accepted { id: settled, relay: None }
             }
             None | Some(Relation::Incoming { .. } | Relation::Closed { .. }) => {
                 if let Some(Relation::Closed {
@@ -562,7 +596,7 @@ impl Book {
             (
                 FriendMsg::Request { id, .. },
                 Relation::Outgoing { id: ours, .. },
-                FriendReply::Accepted { id: settled },
+                FriendReply::Accepted { id: settled, .. },
             ) if ours == *id && *settled <= ours => {
                 self.set(peer, Relation::Friends { id: *settled, since: now });
                 true
@@ -776,6 +810,7 @@ mod tests {
         let msg = FriendMsg::Request {
             id: RequestId([1; 16]),
             name: format!("  {}\u{7}", "x".repeat(80)),
+            relay: None,
         };
         b.on_message(key(1), &msg, T0);
         assert_eq!(b.record(&key(1)).unwrap().name, "x".repeat(32));
@@ -955,11 +990,11 @@ mod tests {
         p.b.on_message(p.ia, &ping, T0);
         assert_eq!(p.b.record(&p.ia).unwrap().avatar, Some(good.clone()));
 
-        let pong = FriendReply::Pong { name: String::new(), status: Default::default(), avatar: Some(good.clone()) };
+        let pong = FriendReply::Pong { name: String::new(), status: Default::default(), avatar: Some(good.clone()), relay: None };
         assert!(p.a.on_reply(&p.ib, &ping, &pong, T0), "a new picture is a change");
         assert_eq!(p.a.record(&p.ib).unwrap().avatar, Some(good));
 
-        let pong = FriendReply::Pong { name: String::new(), status: Default::default(), avatar: Some("../../key".into()) };
+        let pong = FriendReply::Pong { name: String::new(), status: Default::default(), avatar: Some("../../key".into()), relay: None };
         p.a.on_reply(&p.ib, &ping, &pong, T0);
         assert_eq!(p.a.record(&p.ib).unwrap().avatar, None, "a path is never taken for a hash");
     }
@@ -1024,7 +1059,7 @@ mod tests {
         // Old messages turn up again, in both directions.
         assert!(matches!(p.a.on_message(p.ib, &accept, T0 + 2), FriendReply::Gone { .. }));
         assert!(matches!(p.b.on_message(p.ia, &request, T0 + 2), FriendReply::Gone { .. }));
-        let ping = FriendMsg::Ping { id: accept_id(&accept), name: String::new(), avatar: None, status: Default::default() };
+        let ping = FriendMsg::Ping { id: accept_id(&accept), name: String::new(), avatar: None, status: Default::default(), relay: None };
         assert!(matches!(p.a.on_message(p.ib, &ping, T0 + 2), FriendReply::Gone { .. }));
         assert!(!p.a.is_friend(&p.ib) && !p.b.is_friend(&p.ia));
     }
@@ -1060,7 +1095,7 @@ mod tests {
         a.request(ib, T0).unwrap();
         let id = a.relation(&ib).unwrap().id();
         // C learned B's request id somehow and claims it.
-        let reply = a.on_message(ic, &FriendMsg::Accept { id, name: String::new() }, T0);
+        let reply = a.on_message(ic, &FriendMsg::Accept { id, name: String::new(), relay: None }, T0);
         assert_eq!(reply, FriendReply::Unknown);
         assert!(!a.is_friend(&ib) && !a.is_friend(&ic));
         assert!(matches!(a.relation(&ib), Some(Relation::Outgoing { .. })));
@@ -1071,7 +1106,7 @@ mod tests {
         let (ia, ib) = (key(1), key(2));
         let mut a = Book::new(ia);
         a.request(ib, T0).unwrap();
-        let reply = a.on_message(ib, &FriendMsg::Accept { id: RequestId([9; 16]), name: String::new() }, T0);
+        let reply = a.on_message(ib, &FriendMsg::Accept { id: RequestId([9; 16]), name: String::new(), relay: None }, T0);
         assert_eq!(reply, FriendReply::Unknown);
         assert!(!a.is_friend(&ib));
     }
@@ -1079,7 +1114,7 @@ mod tests {
     #[test]
     fn an_unsolicited_accept_is_refused() {
         let mut a = Book::new(key(1));
-        let reply = a.on_message(key(2), &FriendMsg::Accept { id: RequestId([9; 16]), name: String::new() }, T0);
+        let reply = a.on_message(key(2), &FriendMsg::Accept { id: RequestId([9; 16]), name: String::new(), relay: None }, T0);
         assert_eq!(reply, FriendReply::Unknown);
         assert!(a.relation(&key(2)).is_none());
     }
@@ -1092,7 +1127,7 @@ mod tests {
         p.a.cancel(&p.ib, T0).unwrap();
         // A late "Accepted" for the canceled request must not revive it.
         let id = p.a.relation(&p.ib).unwrap().id();
-        p.a.on_reply(&p.ib, &request, &FriendReply::Accepted { id }, T0);
+        p.a.on_reply(&p.ib, &request, &FriendReply::Accepted { id, relay: None }, T0);
         assert!(!p.a.is_friend(&p.ib));
     }
 
@@ -1115,10 +1150,10 @@ mod tests {
     fn one_peer_cannot_flood_us_with_new_requests() {
         let mut b = Book::new(key(2));
         for n in 0..MAX_NEW_REQUESTS as u8 {
-            let msg = FriendMsg::Request { id: RequestId([n; 16]), name: String::new() };
+            let msg = FriendMsg::Request { id: RequestId([n; 16]), name: String::new(), relay: None };
             assert_eq!(b.on_message(key(1), &msg, T0), FriendReply::Received);
         }
-        let msg = FriendMsg::Request { id: RequestId([99; 16]), name: String::new() };
+        let msg = FriendMsg::Request { id: RequestId([99; 16]), name: String::new(), relay: None };
         assert_eq!(b.on_message(key(1), &msg, T0), FriendReply::Busy);
         assert_eq!(b.on_message(key(1), &msg, T0 + REQUEST_WINDOW + 1), FriendReply::Received);
     }
@@ -1128,11 +1163,11 @@ mod tests {
         let mut b = Book::new(key(0));
         for n in 1..=MAX_PENDING_INCOMING {
             let peer = SecretKey::from_bytes(&[n as u8; 32]).public();
-            let msg = FriendMsg::Request { id: RequestId::random(), name: String::new() };
+            let msg = FriendMsg::Request { id: RequestId::random(), name: String::new(), relay: None };
             assert_eq!(b.on_message(peer, &msg, T0), FriendReply::Received, "n={n}");
         }
         let extra = SecretKey::from_bytes(&[251; 32]).public();
-        let msg = FriendMsg::Request { id: RequestId::random(), name: String::new() };
+        let msg = FriendMsg::Request { id: RequestId::random(), name: String::new(), relay: None };
         assert_eq!(b.on_message(extra, &msg, T0), FriendReply::Busy);
     }
 
@@ -1149,7 +1184,7 @@ mod tests {
     #[test]
     fn a_ping_we_cannot_match_is_answered_without_harm() {
         let mut p = friends();
-        let ping = FriendMsg::Ping { id: RequestId([7; 16]), name: String::new(), avatar: None, status: Default::default() };
+        let ping = FriendMsg::Ping { id: RequestId([7; 16]), name: String::new(), avatar: None, status: Default::default(), relay: None };
         assert_eq!(p.a.on_message(p.ib, &ping, T0), FriendReply::Unknown);
         assert!(p.a.is_friend(&p.ib));
         // And Unknown to our ping does not end it on our side either.
@@ -1175,5 +1210,30 @@ mod tests {
         let json = serde_json::to_string(p.a.records().values().next().unwrap()).unwrap();
         let back: PeerRecord = serde_json::from_str(&json).unwrap();
         assert_eq!(&back, p.a.records().values().next().unwrap());
+    }
+
+    #[test]
+    fn a_record_from_an_older_version_has_no_relay() {
+        let id = "01".repeat(16);
+        let json = format!(r#"{{"relation":{{"state":"friends","id":"{id}","since":5}},"name":"ana"}}"#);
+        let record: PeerRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(record.relay, None);
+        assert!(!serde_json::to_string(&record).unwrap().contains("relay"));
+    }
+
+    #[test]
+    fn relays_are_kept_only_when_https_and_only_for_known_peers() {
+        let mut p = friends();
+        let relay = "https://relay.example.com";
+        assert!(p.a.set_relay(&key(9), Some(relay)).is_none(), "a stranger gets no record");
+        assert!(p.a.set_relay(&p.ib, Some("http://10.0.0.1")).is_none());
+        assert!(p.a.set_relay(&p.ib, Some("nonsense")).is_none());
+        assert!(p.a.set_relay(&p.ib, Some(relay)).is_some());
+        assert!(p.a.set_relay(&p.ib, Some(relay)).is_none(), "unchanged");
+        assert!(p.a.set_relay(&p.ib, None).is_none(), "saying nothing erases nothing");
+        assert_eq!(p.a.relays(), vec![(p.ib, relay.parse().unwrap())]);
+        let other = "https://other.example.com";
+        assert!(p.a.set_relay(&p.ib, Some(other)).is_some());
+        assert_eq!(p.a.record(&p.ib).unwrap().relay.as_deref(), Some("https://other.example.com/"));
     }
 }
