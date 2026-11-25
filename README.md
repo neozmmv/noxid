@@ -56,8 +56,11 @@ to build from a checkout, and `--uninstall`/`-Uninstall`.
 
 ### Friends
 
-- Your **Noxid ID** is in your profile (bottom left). It is the same identity
-  as your room code, so share it with people you'd let knock.
+- Your **Noxid ID** is in your profile (bottom left). It is the same code as
+  your room code, so share it with people you'd let knock. It also names the
+  relay that reaches you, so friends connect where iroh's address lookup is
+  blocked; friends keep each other's relays current whenever both are online.
+  A plain 64-character ID still works for adding someone.
 - **Add friend** with someone's ID sends a request. You're friends once they
   accept; until then it shows as sent, and whether it has reached them.
 - There is no server holding requests: a request (or a removal) reaches the
