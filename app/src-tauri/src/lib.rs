@@ -35,6 +35,9 @@ struct Profile {
     /// A relay to use beside n0's.
     #[serde(default)]
     custom_relay: Option<String>,
+    /// Use `custom_relay` instead of n0's relays.
+    #[serde(default)]
+    custom_relay_only: bool,
 }
 
 /// How often voice levels are pushed to the webview for the speaking
@@ -113,6 +116,7 @@ fn remember(node: &Node) {
         screen_audio: Some(snapshot.screen_audio),
         status: snapshot.status,
         custom_relay: snapshot.custom_relay,
+        custom_relay_only: snapshot.custom_relay_only,
     });
 }
 
@@ -126,6 +130,15 @@ async fn set_custom_relay(state: tauri::State<'_, AppState>, url: Option<String>
         .transpose()?;
     let node = node(&state).await?;
     node.set_custom_relay(url).await;
+    remember(&node);
+    Ok(())
+}
+
+/// Uses the custom relay instead of n0's relays, or beside them again.
+#[tauri::command]
+async fn set_custom_relay_only(state: tauri::State<'_, AppState>, only: bool) -> CommandResult<()> {
+    let node = node(&state).await?;
+    node.set_custom_relay_only(only).await?;
     remember(&node);
     Ok(())
 }
@@ -725,6 +738,10 @@ pub fn run() {
                                 .inspect_err(|e| tracing::warn!("ignoring the saved custom relay: {e}"))
                                 .ok()
                         }),
+                        // Applied as the endpoint is built, before it is
+                        // online, so no n0 relay is ever our home and none
+                        // ends up in a code.
+                        custom_relay_only: profile.custom_relay_only,
                     };
                     let node = Node::spawn(config).await?;
                     if let Some(on) = profile.screen_audio {
@@ -774,6 +791,7 @@ pub fn run() {
             set_animated_avatar,
             set_status,
             set_custom_relay,
+            set_custom_relay_only,
             check_relay,
             clear_avatar,
             avatar,
@@ -816,4 +834,27 @@ pub fn run() {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Profile;
+
+    #[test]
+    fn a_profile_from_before_the_setting_has_it_off() {
+        let profile: Profile = serde_json::from_str(r#"{"name":"ana","custom_relay":"https://relay.example.com"}"#).unwrap();
+        assert!(!profile.custom_relay_only);
+        assert_eq!(profile.custom_relay.as_deref(), Some("https://relay.example.com"));
+    }
+
+    #[test]
+    fn the_setting_is_saved_and_read_back() {
+        let profile = Profile {
+            custom_relay: Some("https://relay.example.com".into()),
+            custom_relay_only: true,
+            ..Profile::default()
+        };
+        let back: Profile = serde_json::from_str(&serde_json::to_string(&profile).unwrap()).unwrap();
+        assert!(back.custom_relay_only);
+    }
 }

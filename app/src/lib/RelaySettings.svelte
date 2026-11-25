@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import { api } from "./api";
-  import type { RelayHealth, Snapshot } from "./types";
+  import type { OnlyRelayStatus, RelayHealth, Snapshot } from "./types";
 
   // One relay of the user's own, used beside the default ones. Saving it
   // checks it at once; Test checks the saved one again.
@@ -26,6 +26,34 @@
       "Relay is reachable, but QUIC address discovery failed. Connections may go through the relay instead of P2P.",
     unreachable: "Relay unreachable or not an iroh relay.",
   };
+
+  // While it is the only relay, how it is doing, from the node itself.
+  const onlyMessages: Record<OnlyRelayStatus, string> = {
+    connected: "Connected. Your codes name this relay.",
+    connecting: "Connecting to this relay…",
+    unreachable:
+      "Only this relay is allowed and it isn't reachable. Turn off “Use only this relay” to use the default relays.",
+  };
+  const onlyDot: Record<OnlyRelayStatus, string> = {
+    connected: "good",
+    connecting: "",
+    unreachable: "unreachable",
+  };
+
+  async function setOnly(event: Event & { currentTarget: HTMLInputElement }) {
+    const box = event.currentTarget;
+    const on = box.checked;
+    error = null;
+    busy = true;
+    try {
+      await api.setCustomRelayOnly(on);
+    } catch (e) {
+      box.checked = !on;
+      error = String(e);
+    } finally {
+      busy = false;
+    }
+  }
 
   async function check(target: string) {
     const mine = ++generation;
@@ -114,6 +142,29 @@
       {messages[health]}
     </p>
   {/if}
+
+  <label class="check">
+    <input
+      type="checkbox"
+      checked={snapshot.custom_relay_only}
+      disabled={!saved || busy}
+      onchange={setOnly}
+    />
+    <span class:off={!saved}>
+      Use only this relay
+      <small>
+        For talking to people on networks that block the default relays; all of you should turn it on.
+        Calls that can't go direct use this relay's bandwidth.
+      </small>
+    </span>
+  </label>
+
+  {#if snapshot.only_relay_status}
+    <p class="health" role="status">
+      <span class={["dot", onlyDot[snapshot.only_relay_status]]} aria-hidden="true"></span>
+      {onlyMessages[snapshot.only_relay_status]}
+    </p>
+  {/if}
 </div>
 
 <style>
@@ -139,6 +190,35 @@
 
   .error {
     color: var(--signal);
+  }
+
+  .check {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: start;
+    gap: 0.6rem;
+  }
+
+  .check input {
+    margin-top: 0.25rem;
+    accent-color: var(--lamp);
+    width: 1rem;
+    height: 1rem;
+  }
+
+  .check span {
+    color: var(--moon);
+    display: grid;
+    gap: 0.2rem;
+  }
+
+  .check small {
+    color: var(--mist);
+    font-size: var(--step--1);
+  }
+
+  .check .off {
+    opacity: 0.5;
   }
 
   .actions {
