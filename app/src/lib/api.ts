@@ -28,6 +28,7 @@ export const api = {
   setName: (name: string) => invoke<void>("set_name", { name }),
   setStatus: (status: Status) => invoke<void>("set_status", { status }),
   setCustomRelay: (url: string | null) => invoke<void>("set_custom_relay", { url }),
+  setCustomRelayOnly: (only: boolean) => invoke<void>("set_custom_relay_only", { only }),
   checkRelay: (url: string) => invoke<RelayHealth>("check_relay", { url }),
   createRoom: (name: string | null) => invoke<void>("create_room", { name }),
   invite: () => invoke<string>("invite"),

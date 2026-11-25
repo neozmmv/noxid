@@ -119,7 +119,7 @@
 
   .controls .close:hover {
     background: var(--signal);
-    color: var(--ink);
+    color: #fff;
   }
 
   /* Lit in the accent: the one thing up here asking for you. */

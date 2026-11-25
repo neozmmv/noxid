@@ -2,6 +2,7 @@
 //! and the media pipeline. Kept free of Tauri so a headless node or a future
 //! relay can reuse it.
 
+pub mod address_book;
 mod admin;
 mod avatar;
 pub mod audio;
@@ -25,7 +26,8 @@ mod wgc;
 
 pub use avatar::Crop as AvatarCrop;
 pub use node::{
-    KnockView, LeaveMode, MAX_SCREEN_VOLUME, MAX_VOLUME, MemberView, Node, NodeConfig, Notice, PeerAudio, PeerView, QualityMode,
+    KnockView, LeaveMode, MAX_SCREEN_VOLUME, MAX_VOLUME, MemberView, Node, NodeConfig, Notice, OnlyRelayStatus, PeerAudio,
+    PeerView, QualityMode,
     RoomView, Snapshot, Stream,
 };
 

@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use iroh::{Endpoint, EndpointId, RelayUrl, SecretKey, endpoint::presets, protocol::Router};
+use iroh::{Endpoint, EndpointId, RelayMode, RelayUrl, SecretKey, Watcher, endpoint::presets, protocol::Router};
 use iroh_live::{
     Live,
     media::{frame_channel::FrameReceiver, publish::LocalBroadcast, video::Frame},
@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, oneshot, watch};
 use tracing::{info, warn};
 
+use crate::address_book::{self, AddressBook};
 use crate::admin::{self, ADMIN_ALPN, AdminHandler};
 use crate::avatar::{self, AVATAR_ALPN, AvatarHandler, Avatars};
 use crate::files::{self, FILES_ALPN, FilesHandler, TransferView, Transfers};
@@ -114,6 +115,9 @@ impl PeerAudio {
 #[derive(Debug, Clone, Serialize)]
 pub struct Snapshot {
     pub id: String,
+    /// What to share so others can add us as a friend: our id and current
+    /// home relay, in the room code format.
+    pub friend_code: String,
     pub name: String,
     /// Our profile picture's hash, to fetch with `avatar`.
     pub avatar: Option<String>,
@@ -153,6 +157,25 @@ pub struct Snapshot {
     pub transfers: Vec<TransferView>,
     /// The relay of our own used beside n0's, if one is set.
     pub custom_relay: Option<String>,
+    /// Whether `custom_relay` is the only relay we use.
+    pub custom_relay_only: bool,
+    /// How the custom relay is doing, while it is the only one; `None`
+    /// otherwise.
+    pub only_relay_status: Option<OnlyRelayStatus>,
+}
+
+/// How the custom relay is doing while it is the only relay we use. There is
+/// no falling back to n0's relays: unreachable means nobody can reach us
+/// through a relay, so it is shown for what it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OnlyRelayStatus {
+    /// It is our home relay, and connected.
+    Connected,
+    /// Not yet: just started, or just switched to it.
+    Connecting,
+    /// It failed, or it has not become our home relay in time.
+    Unreachable,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -230,6 +253,9 @@ pub struct NodeConfig {
     pub output_device: Option<String>,
     /// A relay to use beside n0's. `None` leaves the endpoint as n0 sets it.
     pub custom_relay: Option<RelayUrl>,
+    /// Use `custom_relay` instead of n0's relays, from the very start.
+    /// Ignored without one.
+    pub custom_relay_only: bool,
 }
 
 /// Someone waiting at the door, and the way to answer them.
@@ -284,6 +310,8 @@ pub(crate) struct Inner {
     avatar_watch: watch::Sender<Option<String>>,
     /// The status we show friends.
     status_watch: watch::Sender<friends::Status>,
+    /// Our home relay, for the friends list to send with its messages.
+    relay_watch: watch::Sender<Option<RelayUrl>>,
     /// Copies of other members' pictures.
     pub(crate) avatars: Mutex<Avatars>,
     pub room: Mutex<Room>,
@@ -317,6 +345,15 @@ pub(crate) struct Inner {
     pub(crate) transfers: Transfers,
     /// The relay of our own in the endpoint's relay map, if any.
     custom_relay: CustomRelay,
+    /// When the relays last changed, for telling a custom relay that is
+    /// still connecting from one that is not coming.
+    relay_chosen_at: Mutex<Instant>,
+    /// Wakes `follow_home_relay` when what counts as our home relay changed
+    /// without the endpoint's address changing.
+    relay_mode_changed: tokio::sync::Notify,
+    /// Where the peers we were told about can be reached; see
+    /// [`crate::address_book`].
+    pub(crate) address_book: AddressBook,
     /// The current roster's ids, which the mesh follows.
     pub roster_tx: watch::Sender<Vec<EndpointId>>,
     /// When the host last spoke to us, for noticing it has gone quiet.
@@ -335,9 +372,26 @@ pub struct Node {
 
 impl Node {
     pub async fn spawn(config: NodeConfig) -> Result<Self> {
-        let builder = Endpoint::builder(presets::N0)
+        // Beside the preset's pkarr (over HTTPS) and DNS lookups and mDNS, so
+        // peers we were told about are dialed without asking any of them.
+        let address_book = AddressBook::new(config.secret_key.public());
+        let only = config.custom_relay_only && config.custom_relay.is_some();
+        let defaults = iroh::endpoint::default_relay_mode().relay_map();
+        let mut builder = Endpoint::builder(presets::N0)
             .transport_config(transport_config())
+            .address_lookup(address_book.clone())
             .secret_key(config.secret_key);
+        let custom_relay = if only {
+            // Built with the custom relay alone, so the first net report
+            // has nothing else to choose: no n0 relay is ever our home.
+            let custom = CustomRelay::new(defaults, config.custom_relay.clone(), true);
+            builder = builder.relay_mode(RelayMode::Custom(custom.initial_map()));
+            tracing::debug!("starting with only the custom relay");
+            custom
+        } else {
+            // n0's map, as before; the custom relay joins it below.
+            CustomRelay::new(defaults, None, false)
+        };
         let endpoint = with_mdns(builder, LanPresence::Announce).await.bind().await?;
         let id = endpoint.id();
         info!(%id, "endpoint bound");
@@ -360,12 +414,15 @@ impl Node {
         let own_avatar = avatar::load_own();
         let (avatar_watch, avatar_rx) = watch::channel(own_avatar.clone());
         let (status_watch, status_rx) = watch::channel(friends::Status::default());
+        let (relay_watch, relay_rx) = watch::channel(usable_home(&custom_relay, &endpoint.addr()));
         let friends = Friends::spawn(FriendsConfig {
             endpoint: endpoint.clone(),
             store_path: crate::identity::state_dir()?.join("friends.json"),
             name: name_rx,
             avatar: avatar_rx,
             status: status_rx,
+            relay: relay_rx,
+            address_book: address_book.clone(),
             timing: Timing::default(),
         });
         let (roster_tx, roster_rx) = watch::channel(Vec::new());
@@ -379,6 +436,7 @@ impl Node {
             avatar: Mutex::new(own_avatar),
             avatar_watch,
             status_watch,
+            relay_watch,
             avatars: Mutex::new(Avatars::default()),
             room: Mutex::new(Room::default()),
             local: Mutex::new(Local {
@@ -409,7 +467,10 @@ impl Node {
             deafened: std::sync::atomic::AtomicBool::new(false),
             sensitivity: audio::Sensitivity::default(),
             transfers: Transfers::default(),
-            custom_relay: CustomRelay::default(),
+            custom_relay,
+            relay_chosen_at: Mutex::new(Instant::now()),
+            relay_mode_changed: tokio::sync::Notify::new(),
+            address_book,
             roster_tx,
             last_heard_host: Mutex::new(Instant::now()),
             changed: watch::channel(0).0,
@@ -454,12 +515,15 @@ impl Node {
         tokio::spawn(admin::drop_absent(inner.clone()));
         tokio::spawn(avatar::run(inner.clone()));
         tokio::spawn(forward_friend_events(inner.clone()));
+        tokio::spawn(follow_home_relay(inner.clone()));
 
         // Before waiting to come online, so a home relay can be found through
-        // it where n0's are blocked.
-        if config.custom_relay.is_some() {
+        // it where n0's are blocked. With only the custom relay, the
+        // endpoint was built with it already.
+        if config.custom_relay.is_some() && !only {
             inner.custom_relay.set(&endpoint, config.custom_relay).await;
         }
+        inner.relays_changed();
 
         match tokio::time::timeout(ONLINE_TIMEOUT, endpoint.online()).await {
             Ok(()) => info!("online"),
@@ -477,6 +541,12 @@ impl Node {
 
     pub fn id(&self) -> EndpointId {
         self.inner.endpoint.id()
+    }
+
+    /// What to share so others can add us as a friend; see
+    /// [`friends::friend_code`].
+    pub fn friend_code(&self) -> String {
+        friends::friend_code(&self.id(), self.inner.home_relay().as_ref())
     }
 
     /// A watch that ticks whenever [`snapshot`](Self::snapshot) would change.
@@ -590,6 +660,8 @@ impl Node {
             let mut room = self.inner.room.lock().unwrap();
             room.create(name, &own_id, &own_name);
             room.set_avatar(&own_id, self.inner.own_avatar().as_deref());
+            let relay = self.inner.home_relay().map(|url| url.to_string());
+            room.set_relay(&own_id, relay.as_deref());
         }
         self.inner.start_local()?;
         self.inner.roster_changed(None);
@@ -604,7 +676,7 @@ impl Node {
                 .room
                 .lock()
                 .unwrap()
-                .generate_invite(self.id(), ttl, chrono::Utc::now())?;
+                .generate_invite(self.id(), self.inner.home_relay().as_ref(), ttl, chrono::Utc::now())?;
         Ok(code)
     }
 
@@ -617,8 +689,21 @@ impl Node {
         }
         self.leave().await;
 
+        if let Some(relay) = code.relay() {
+            self.inner
+                .address_book
+                .insert(code.coordinator(), relay.clone(), address_book::Source::Code);
+        }
         let own_avatar = self.inner.own_avatar();
-        let admission = admin::join(&self.inner.endpoint, code, self.inner.name(), own_avatar.clone()).await?;
+        let own_relay = self.inner.home_relay().map(|url| url.to_string());
+        let admission = admin::join(
+            &self.inner.endpoint,
+            code.clone(),
+            self.inner.name(),
+            own_avatar.clone(),
+            own_relay,
+        )
+        .await?;
         let own_id = self.id().to_string();
         {
             let mut room = self.inner.room.lock().unwrap();
@@ -1043,11 +1128,22 @@ impl Node {
         Ok(())
     }
 
-    /// Uses `url` beside n0's relays from now on, or stops using the one set
-    /// with `None`. Takes effect at once; see [`crate::relay`].
+    /// Uses `url` beside n0's relays from now on (or instead of them, if
+    /// "only this relay" is on), or stops using the one set with `None`,
+    /// which also turns "only this relay" off. Takes effect at once; see
+    /// [`crate::relay`].
     pub async fn set_custom_relay(&self, url: Option<RelayUrl>) {
         self.inner.custom_relay.set(&self.inner.endpoint, url).await;
-        self.inner.bump();
+        self.inner.relays_changed();
+    }
+
+    /// Uses the custom relay instead of n0's, or beside them again. Refused
+    /// without a custom relay. Our home relay moves to it within one net
+    /// report, and the room and friends hear of it as of any other move.
+    pub async fn set_custom_relay_only(&self, only: bool) -> Result<(), String> {
+        self.inner.custom_relay.set_only(&self.inner.endpoint, only).await?;
+        self.inner.relays_changed();
+        Ok(())
     }
 
     pub async fn shutdown(&self) {
@@ -1066,6 +1162,71 @@ async fn forward_friend_events(inner: Arc<Inner>) {
             Err(broadcast::error::RecvError::Closed) => break,
         }
     }
+}
+
+/// Keeps the room up to date with our home relay, which changes when the
+/// network does or a custom relay comes or goes: as host, in our own roster
+/// entry and room code; as a member, by telling the host, who passes it on.
+async fn follow_home_relay(inner: Arc<Inner>) {
+    let mut addrs = inner.endpoint.watch_addr();
+    let mut statuses = inner.endpoint.home_relay_status();
+    let mut last = inner.home_relay();
+    loop {
+        tokio::select! {
+            changed = addrs.updated() => if changed.is_err() { return },
+            changed = statuses.updated() => {
+                if changed.is_err() {
+                    return;
+                }
+                // The custom relay's status is in the snapshot.
+                inner.bump();
+            }
+            _ = inner.relay_mode_changed.notified() => {}
+        }
+        let relay = inner.home_relay();
+        if relay == last {
+            continue;
+        }
+        info!(relay = ?relay.as_ref().map(ToString::to_string), "home relay changed");
+        if inner.custom_relay.only() {
+            tracing::debug!(
+                relay = ?relay.as_ref().map(ToString::to_string),
+                "home relay changed with only the custom relay in use"
+            );
+        }
+        last = relay.clone();
+        // Friends hear it with their next ping; pinging now makes that soon.
+        inner.relay_watch.send_replace(relay.clone());
+        inner.friends.announce();
+        // The friend code in the snapshot names it.
+        inner.bump();
+        let own_id = inner.own_id().to_string();
+        let relay = relay.map(|url| url.to_string());
+        let (active, is_host, coordinator) = {
+            let room = inner.room.lock().unwrap();
+            (room.is_active(), room.is_coordinator(&own_id), room.coordinator_id.clone())
+        };
+        if !active {
+            continue;
+        }
+        if is_host {
+            inner.room.lock().unwrap().set_relay(&own_id, relay.as_deref());
+            inner.roster_changed(None);
+        } else if let Some(coordinator) = coordinator.and_then(|c| c.parse().ok()) {
+            let endpoint = inner.endpoint.clone();
+            tokio::spawn(async move {
+                if let Err(e) = admin::notify_relay(&endpoint, coordinator, relay).await {
+                    tracing::debug!("could not tell the host our new relay: {e:#}");
+                }
+            });
+        }
+    }
+}
+
+/// The home relay in `addr`, if it may be handed out; see
+/// [`CustomRelay::is_usable_home`].
+fn usable_home(custom: &CustomRelay, addr: &iroh::EndpointAddr) -> Option<RelayUrl> {
+    addr.relay_urls().next().filter(|url| custom.is_usable_home(url)).cloned()
 }
 
 /// Runs futures concurrently and waits for all of them, without pulling in a
@@ -1186,6 +1347,40 @@ impl Inner {
         self.changed.subscribe()
     }
 
+    /// Our home relay right now, if we have one we may hand out: with only
+    /// the custom relay in use, nothing but the custom relay.
+    pub fn home_relay(&self) -> Option<RelayUrl> {
+        usable_home(&self.custom_relay, &self.endpoint.addr())
+    }
+
+    /// Call after the relay map changed: what counts as our home relay is
+    /// looked at again, and the custom relay's status gets its grace period
+    /// anew, with a redraw once that is over.
+    fn relays_changed(self: &Arc<Self>) {
+        *self.relay_chosen_at.lock().unwrap() = Instant::now();
+        self.relay_mode_changed.notify_one();
+        self.bump();
+        let weak = Arc::downgrade(self);
+        tokio::spawn(async move {
+            tokio::time::sleep(ONLINE_TIMEOUT).await;
+            if let Some(inner) = weak.upgrade() {
+                inner.bump();
+            }
+        });
+    }
+
+    fn only_relay_status(&self) -> Option<OnlyRelayStatus> {
+        let custom = self.custom_relay.url().filter(|_| self.custom_relay.only())?;
+        let statuses = self.endpoint.home_relay_status().get();
+        let ours = statuses.iter().find(|s| *s.url() == custom);
+        Some(match ours {
+            Some(status) if status.is_connected() => OnlyRelayStatus::Connected,
+            Some(status) if status.last_error().is_some() => OnlyRelayStatus::Unreachable,
+            _ if self.relay_chosen_at.lock().unwrap().elapsed() < ONLINE_TIMEOUT => OnlyRelayStatus::Connecting,
+            _ => OnlyRelayStatus::Unreachable,
+        })
+    }
+
     pub fn own_avatar(&self) -> Option<String> {
         self.avatar.lock().unwrap().clone()
     }
@@ -1211,10 +1406,14 @@ impl Inner {
     /// redraws, and on the coordinator every member hears about it (except
     /// `subject`, who learned the outcome from the reply that caused it).
     pub fn roster_changed(&self, subject: Option<&str>) {
-        let (ids, is_coordinator) = {
+        let (ids, relays, is_coordinator) = {
             let room = self.room.lock().unwrap();
-            (room.member_ids(), room.is_coordinator(&self.own_id().to_string()))
+            (room.member_ids(), room.relays(), room.is_coordinator(&self.own_id().to_string()))
         };
+        // Before the mesh hears of anyone new, so it dials them with this.
+        for (id, relay) in relays {
+            self.address_book.insert(id, relay, address_book::Source::Roster);
+        }
         self.roster_tx.send_replace(ids);
         if is_coordinator {
             admin::broadcast_roster(self, subject);
@@ -1428,11 +1627,11 @@ impl Inner {
             RoomView {
                 name: room.name.clone(),
                 is_coordinator,
-                room_code: is_coordinator.then(|| room::room_code(&own_id)),
+                room_code: is_coordinator.then(|| room::room_code(&own_id, self.home_relay().as_ref())),
                 members: room
                     .roster()
                     .into_iter()
-                    .map(|Member { id, name, avatar }| {
+                    .map(|Member { id, name, avatar, .. }| {
                         let parsed: Option<EndpointId> = id.parse().ok();
                         let mut peer = parsed
                             .and_then(|p| peers.get(&p).cloned())
@@ -1474,6 +1673,7 @@ impl Inner {
         knocks.sort_by(|a, b| a.id.cmp(&b.id));
 
         Snapshot {
+            friend_code: friends::friend_code(&own_id, self.home_relay().as_ref()),
             id: own,
             name: self.name(),
             avatar: own_avatar,
@@ -1497,6 +1697,8 @@ impl Inner {
             camera_device: local.camera.as_ref().map(|c| c.id.clone()),
             transfers: self.transfers.views(),
             custom_relay: self.custom_relay.url().map(|url| url.to_string()),
+            custom_relay_only: self.custom_relay.only(),
+            only_relay_status: self.only_relay_status(),
         }
     }
 

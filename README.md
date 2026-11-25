@@ -56,8 +56,11 @@ to build from a checkout, and `--uninstall`/`-Uninstall`.
 
 ### Friends
 
-- Your **Noxid ID** is in your profile (bottom left). It is the same identity
-  as your room code, so share it with people you'd let knock.
+- Your **Noxid ID** is in your profile (bottom left). It is the same code as
+  your room code, so share it with people you'd let knock. It also names the
+  relay that reaches you, so friends connect where iroh's address lookup is
+  blocked; friends keep each other's relays current whenever both are online.
+  A plain 64-character ID still works for adding someone.
 - **Add friend** with someone's ID sends a request. You're friends once they
   accept; until then it shows as sent, and whether it has reached them.
 - There is no server holding requests: a request (or a removal) reaches the
@@ -76,6 +79,17 @@ Noxid lets you use a custom [iroh-relay](https://github.com/n0-computer/iroh/tre
 ```
 https://relay.neozmmv.dev
 ```
+
+Room codes and invites carry the host's relay, and the room shares every
+member's, so people reach each other through it even on networks that block
+iroh's address lookup. Codes made by this version need this version or newer
+to join with.
+
+If you talk to people on a network that blocks the default relays, turn on
+**Use only this relay** in Settings, all of you. Your codes then always name
+the custom relay instead of whichever default relay is closest. Calls that
+can't go direct use that relay's bandwidth, and if it goes down Noxid says so
+rather than quietly switching back to the default relays.
 
 ## Build from source
 

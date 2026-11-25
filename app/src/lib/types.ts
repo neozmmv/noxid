@@ -49,6 +49,8 @@ export interface KnockView {
 
 export interface Snapshot {
   id: string;
+  /** What others add us by: our id and current home relay, as a code. */
+  friend_code: string;
   name: string;
   /** Our profile picture's hash. */
   avatar: string | null;
@@ -83,10 +85,16 @@ export interface Snapshot {
   transfers: TransferView[];
   /** The relay of our own used beside the default ones, if set. */
   custom_relay: string | null;
+  /** Whether the custom relay is the only relay in use. */
+  custom_relay_only: boolean;
+  /** How the custom relay is doing while it is the only one. */
+  only_relay_status: OnlyRelayStatus | null;
 }
 
 /** What the custom relay check found. */
 export type RelayHealth = "good" | "no_address_discovery" | "unreachable";
+
+export type OnlyRelayStatus = "connected" | "connecting" | "unreachable";
 
 export type TransferState =
   /** Sending: waiting for them to accept. */

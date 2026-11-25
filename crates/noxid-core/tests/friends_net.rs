@@ -9,7 +9,8 @@ use std::time::Duration;
 use iroh::address_lookup::MemoryLookup;
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
-use iroh::{Endpoint, EndpointAddr, EndpointId, RelayMode, SecretKey, TransportAddr};
+use iroh::{Endpoint, EndpointAddr, EndpointId, RelayMode, RelayUrl, SecretKey, TransportAddr};
+use noxid_core::address_book::AddressBook;
 use noxid_core::friends::state::Relation;
 use noxid_core::friends::wire::{FRIENDS_ALPN, FriendMsg, FriendReply, RequestId};
 use noxid_core::friends::{Friends, FriendsConfig, Presence, RingOutcome, Timing, parse_friend_id};
@@ -19,6 +20,11 @@ struct Peer {
     key: SecretKey,
     dir: PathBuf,
     name: watch::Sender<String>,
+    /// The home relay this peer sends; made up, since loopback needs none.
+    relay: watch::Sender<Option<RelayUrl>>,
+    /// The address book on this peer's endpoint, beside the shared lookup
+    /// that holds the real addresses.
+    book: AddressBook,
     endpoint: Endpoint,
     router: Router,
     friends: Friends,
@@ -30,10 +36,22 @@ impl Peer {
     }
 
     async fn start(key: SecretKey, dir: PathBuf, name: &str, lookup: &MemoryLookup) -> Self {
+        Self::start_with_relay(key, dir, name, lookup, None).await
+    }
+
+    async fn start_with_relay(
+        key: SecretKey,
+        dir: PathBuf,
+        name: &str,
+        lookup: &MemoryLookup,
+        relay: Option<RelayUrl>,
+    ) -> Self {
+        let book = AddressBook::new(key.public());
         let endpoint = Endpoint::builder(presets::Minimal)
             .secret_key(key.clone())
             .relay_mode(RelayMode::Disabled)
             .address_lookup(lookup.clone())
+            .address_lookup(book.clone())
             .bind_addr("127.0.0.1:0")
             .unwrap()
             .bind()
@@ -44,12 +62,15 @@ impl Peer {
             addrs: endpoint.bound_sockets().into_iter().map(TransportAddr::Ip).collect(),
         });
         let (name_tx, name_rx) = watch::channel(name.to_string());
+        let (relay_tx, relay_rx) = watch::channel(relay);
         let friends = Friends::spawn(FriendsConfig {
             endpoint: endpoint.clone(),
             store_path: dir.join("friends.json"),
             name: name_rx,
             avatar: watch::channel(None).1,
             status: watch::channel(Default::default()).1,
+            relay: relay_rx,
+            address_book: book.clone(),
             timing: Timing::fast(),
         });
         let router = Router::builder(endpoint.clone())
@@ -59,6 +80,8 @@ impl Peer {
             key,
             dir,
             name: name_tx,
+            relay: relay_tx,
+            book,
             endpoint,
             router,
             friends,
@@ -75,8 +98,9 @@ impl Peer {
 
     async fn restart(self, lookup: &MemoryLookup) -> Self {
         let name = self.name.borrow().clone();
+        let relay = self.relay.borrow().clone();
         let (key, dir) = self.stop().await;
-        Self::start(key, dir, &name, lookup).await
+        Self::start_with_relay(key, dir, &name, lookup, relay).await
     }
 }
 
@@ -133,7 +157,7 @@ fn invite_from(coordinator: &SecretKey) -> String {
     let mut room = noxid_core::room::Room::default();
     let id = coordinator.public();
     room.create(None, &id.to_string(), "host");
-    room.generate_invite(id, chrono::Duration::minutes(1), chrono::Utc::now())
+    room.generate_invite(id, None, chrono::Duration::minutes(1), chrono::Utc::now())
         .unwrap()
         .0
 }
@@ -262,7 +286,7 @@ async fn a_stale_acceptance_cannot_bring_back_a_removed_friend() {
     until("B saw the removal", || !b.friends.is_friend(&a.id())).await;
 
     // B's old Accept turns up again.
-    let payload = serde_json::to_vec(&FriendMsg::Accept { id: request_id, name: String::new() }).unwrap();
+    let payload = serde_json::to_vec(&FriendMsg::Accept { id: request_id, name: String::new(), relay: None }).unwrap();
     let reply = raw_call(&b.endpoint, a.id(), &payload).await;
     assert!(matches!(reply, Some(FriendReply::Gone { .. })), "{reply:?}");
     assert!(!a.friends.is_friend(&b.id()));
@@ -276,7 +300,7 @@ async fn nobody_else_can_accept_on_the_recipients_behalf() {
     until("delivered", || !b.friends.view().incoming.is_empty()).await;
     let id = a.friends.relation(&b.id()).unwrap().id();
 
-    let payload = serde_json::to_vec(&FriendMsg::Accept { id, name: String::new() }).unwrap();
+    let payload = serde_json::to_vec(&FriendMsg::Accept { id, name: String::new(), relay: None }).unwrap();
     let reply = raw_call(&c.endpoint, a.id(), &payload).await;
     assert_eq!(reply, Some(FriendReply::Unknown));
     assert!(!a.friends.is_friend(&b.id()) && !a.friends.is_friend(&c.id()));
@@ -308,8 +332,8 @@ async fn friends_show_as_online_once_reached() {
 async fn ids_are_parsed_from_hex_or_a_room_code_and_checked() {
     let own = SecretKey::from_bytes(&[1; 32]).public();
     let other = SecretKey::from_bytes(&[2; 32]).public();
-    assert_eq!(parse_friend_id(&other.to_string(), own).unwrap(), other);
-    assert_eq!(parse_friend_id(&noxid_core::room::room_code(&other), own).unwrap(), other);
+    assert_eq!(parse_friend_id(&other.to_string(), own).unwrap().id, other);
+    assert_eq!(parse_friend_id(&noxid_core::room::room_code(&other, None), own).unwrap().id, other);
     assert!(parse_friend_id(&own.to_string(), own).is_err(), "not ourselves");
     assert!(parse_friend_id("hello", own).is_err());
     let invite = invite_from(&SecretKey::from_bytes(&[2; 32]));
@@ -405,4 +429,69 @@ async fn a_ring_for_someone_elses_room_is_refused() {
     let reply = raw_call(&a.endpoint, b.id(), &serde_json::to_vec(&msg).unwrap()).await;
     assert!(matches!(reply, Some(FriendReply::Error { .. })), "{reply:?}");
     assert!(b.friends.view().rings.is_empty());
+}
+
+// ------------------------------------------------------------------ relays
+
+fn relay(url: &str) -> RelayUrl {
+    url.parse().unwrap()
+}
+
+fn stored_relay(holder: &Peer, of: &Peer) -> Option<String> {
+    holder.friends.record(&of.id()).and_then(|r| r.relay)
+}
+
+#[tokio::test]
+async fn relays_travel_with_requests_accepts_and_pings() {
+    let (_lookup, a, b) = pair("relays").await;
+    a.relay.send_replace(Some(relay("https://relay-a.example.com")));
+    b.relay.send_replace(Some(relay("https://relay-b.example.com")));
+
+    // Friends regardless of the made-up relays: the book only adds a path.
+    befriend(&a, &b).await;
+    until("B has A's relay from the request", || {
+        stored_relay(&b, &a).as_deref() == Some("https://relay-a.example.com/")
+    })
+    .await;
+    until("A has B's relay from the accept", || {
+        stored_relay(&a, &b).as_deref() == Some("https://relay-b.example.com/")
+    })
+    .await;
+    assert_eq!(b.book.relay(&a.id()), Some(relay("https://relay-a.example.com")));
+
+    // A moves; the next ping carries the new relay, and B keeps it.
+    a.relay.send_replace(Some(relay("https://moved.example.com")));
+    a.friends.announce();
+    until("B has A's new relay from a ping", || {
+        stored_relay(&b, &a).as_deref() == Some("https://moved.example.com/")
+    })
+    .await;
+    assert_eq!(b.book.relay(&a.id()), Some(relay("https://moved.example.com")));
+}
+
+#[tokio::test]
+async fn a_saved_relay_is_in_the_book_after_a_restart() {
+    let (lookup, a, b) = pair("saved-relay").await;
+    a.relay.send_replace(Some(relay("https://relay-a.example.com")));
+    befriend(&a, &b).await;
+    until("B has A's relay", || stored_relay(&b, &a).is_some()).await;
+
+    let b = b.restart(&lookup).await;
+    assert_eq!(b.book.relay(&a.id()), Some(relay("https://relay-a.example.com")));
+    until("still friends after the restart", || {
+        b.friends.view().friends.iter().any(|f| f.presence == Presence::Online)
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn adding_by_friend_code_keeps_its_relay() {
+    let (_lookup, a, b) = pair("friend-code").await;
+    let code = noxid_core::friends::friend_code(&b.id(), Some(&relay("https://relay-b.example.com")));
+    let parsed = parse_friend_id(&code, a.id()).unwrap();
+    a.friends.send_request(parsed).await.unwrap();
+
+    assert_eq!(a.book.relay(&b.id()), Some(relay("https://relay-b.example.com")));
+    assert_eq!(stored_relay(&a, &b).as_deref(), Some("https://relay-b.example.com/"));
+    until("B sees A's request", || b.friends.view().incoming.iter().any(|r| r.id == a.id().to_string())).await;
 }

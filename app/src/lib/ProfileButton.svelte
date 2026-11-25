@@ -71,7 +71,7 @@
       </div>
       <div class="id">
         <span>Your Noxid ID</span>
-        <IdChip id={snapshot.id} masked label="Noxid ID" />
+        <IdChip id={snapshot.friend_code} masked label="Noxid ID" />
       </div>
       <button
         class="button quiet"

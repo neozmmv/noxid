@@ -63,7 +63,7 @@
       <span class="icon" aria-hidden="true"><Users size={28} strokeWidth={1.5} /></span>
       <h2>No friends yet</h2>
       <p>Add someone with their Noxid ID, or share yours so they can add you.</p>
-      <IdChip id={snapshot.id} masked label="Noxid ID" />
+      <IdChip id={snapshot.friend_code} masked label="Noxid ID" />
       <button class="button primary" onclick={() => (adding = true)} disabled={!!view.problem}>Add friend</button>
     </section>
   {:else}

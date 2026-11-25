@@ -98,6 +98,10 @@ pub enum FriendMsg {
         id: RequestId,
         #[serde(default)]
         name: String,
+        /// The sender's home relay, so we can reach them without a lookup.
+        /// Left out by older versions, and when the sender has none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        relay: Option<String>,
     },
     /// Says yes to the request `id`. `name` is the accepter's label, so the
     /// requester has something better to show than an id.
@@ -105,6 +109,10 @@ pub enum FriendMsg {
         id: RequestId,
         #[serde(default)]
         name: String,
+        /// The sender's home relay, so we can reach them without a lookup.
+        /// Left out by older versions, and when the sender has none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        relay: Option<String>,
     },
     /// Says no to the request `id`.
     Decline { id: RequestId },
@@ -124,6 +132,10 @@ pub enum FriendMsg {
         /// The sender's chosen status; versions without one are online.
         #[serde(default)]
         status: Status,
+        /// The sender's home relay, so we can reach them without a lookup.
+        /// Left out by older versions, and when the sender has none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        relay: Option<String>,
     },
     /// Rings a friend into our room. Held open until they answer, decline, or
     /// the ring times out; never stored.
@@ -142,7 +154,13 @@ pub enum FriendReply {
     Received,
     /// They had already consented (crossing requests, or they still count us
     /// as a friend): the friendship is active, with this id.
-    Accepted { id: RequestId },
+    Accepted {
+        id: RequestId,
+        /// The sender's home relay, so we can reach them without a lookup.
+        /// Left out by older versions, and when the sender has none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        relay: Option<String>,
+    },
     /// Applied, or already applied.
     Ack,
     Pong {
@@ -152,6 +170,10 @@ pub enum FriendReply {
         avatar: Option<String>,
         #[serde(default)]
         status: Status,
+        /// The sender's home relay, so we can reach them without a lookup.
+        /// Left out by older versions, and when the sender has none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        relay: Option<String>,
     },
     /// That id is closed on their side.
     Gone { reason: CloseReason },
@@ -164,6 +186,43 @@ pub enum FriendReply {
     Declined,
     NoAnswer,
     Error { message: String },
+}
+
+impl FriendMsg {
+    /// The sender's home relay, for the messages that carry one.
+    pub fn relay(&self) -> Option<&str> {
+        match self {
+            FriendMsg::Request { relay, .. } | FriendMsg::Accept { relay, .. } | FriendMsg::Ping { relay, .. } => {
+                relay.as_deref()
+            }
+            _ => None,
+        }
+    }
+
+    /// Puts our home relay on the messages that carry one.
+    pub fn set_relay(&mut self, ours: Option<String>) {
+        if let FriendMsg::Request { relay, .. } | FriendMsg::Accept { relay, .. } | FriendMsg::Ping { relay, .. } = self
+        {
+            *relay = ours;
+        }
+    }
+}
+
+impl FriendReply {
+    /// The replier's home relay, for the replies that carry one.
+    pub fn relay(&self) -> Option<&str> {
+        match self {
+            FriendReply::Accepted { relay, .. } | FriendReply::Pong { relay, .. } => relay.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Puts our home relay on the replies that carry one.
+    pub fn set_relay(&mut self, ours: Option<String>) {
+        if let FriendReply::Accepted { relay, .. } | FriendReply::Pong { relay, .. } = self {
+            *relay = ours;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -192,6 +251,63 @@ mod tests {
     #[test]
     fn a_request_id_of_the_wrong_length_is_refused() {
         assert!(serde_json::from_str::<FriendMsg>(r#"{"op":"accept","id":"abcd"}"#).is_err());
+    }
+
+    const RELAY: &str = "https://relay.example.com/";
+
+    fn with_and_without_relay() -> Vec<FriendMsg> {
+        let id = RequestId([5; 16]);
+        let mut messages = Vec::new();
+        for relay in [None, Some(RELAY.to_string())] {
+            messages.push(FriendMsg::Request { id, name: "ana".into(), relay: relay.clone() });
+            messages.push(FriendMsg::Accept { id, name: "bo".into(), relay: relay.clone() });
+            messages.push(FriendMsg::Ping {
+                id,
+                name: "cy".into(),
+                avatar: None,
+                status: Status::Away,
+                relay,
+            });
+        }
+        messages
+    }
+
+    #[test]
+    fn messages_round_trip_with_and_without_a_relay() {
+        for msg in with_and_without_relay() {
+            let json = serde_json::to_string(&msg).unwrap();
+            assert_eq!(json.contains("relay"), msg.relay().is_some(), "{json}");
+            assert_eq!(serde_json::from_str::<FriendMsg>(&json).unwrap(), msg);
+        }
+    }
+
+    #[test]
+    fn replies_round_trip_with_and_without_a_relay() {
+        for relay in [None, Some(RELAY.to_string())] {
+            let replies = [
+                FriendReply::Accepted { id: RequestId([6; 16]), relay: relay.clone() },
+                FriendReply::Pong { name: "ana".into(), avatar: None, status: Status::Busy, relay: relay.clone() },
+            ];
+            for reply in replies {
+                let json = serde_json::to_string(&reply).unwrap();
+                assert_eq!(json.contains("relay"), relay.is_some(), "{json}");
+                assert_eq!(serde_json::from_str::<FriendReply>(&json).unwrap(), reply);
+                assert_eq!(reply.relay(), relay.as_deref());
+            }
+        }
+    }
+
+    #[test]
+    fn messages_from_older_versions_have_no_relay() {
+        let id = "01".repeat(16);
+        for op in ["request", "accept", "ping"] {
+            let msg: FriendMsg = serde_json::from_str(&format!(r#"{{"op":"{op}","id":"{id}"}}"#)).unwrap();
+            assert_eq!(msg.relay(), None, "{op}");
+        }
+        let accepted: FriendReply = serde_json::from_str(&format!(r#"{{"op":"accepted","id":"{id}"}}"#)).unwrap();
+        assert_eq!(accepted.relay(), None);
+        let pong: FriendReply = serde_json::from_str(r#"{"op":"pong"}"#).unwrap();
+        assert_eq!(pong.relay(), None);
     }
 
     #[test]

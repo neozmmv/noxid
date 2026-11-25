@@ -89,3 +89,5 @@ pipewire = ["moq-media/pipewire", "dep:ashpd"]
 
 [dev-dependencies]
 anyhow.workspace = true
+# Local relay servers for the relay mode tests.
+iroh = { workspace = true, features = ["test-utils"] }
