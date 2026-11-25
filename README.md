@@ -77,6 +77,11 @@ Noxid lets you use a custom [iroh-relay](https://github.com/n0-computer/iroh/tre
 https://relay.neozmmv.dev
 ```
 
+Room codes and invites carry the host's relay, and the room shares every
+member's, so people reach each other through it even on networks that block
+iroh's address lookup. Codes made by this version need this version or newer
+to join with.
+
 ## Build from source
 
 You need Rust 1.91 or newer and [Bun](https://bun.sh) 1.4 or newer. The
