@@ -26,7 +26,8 @@ mod wgc;
 
 pub use avatar::Crop as AvatarCrop;
 pub use node::{
-    KnockView, LeaveMode, MAX_SCREEN_VOLUME, MAX_VOLUME, MemberView, Node, NodeConfig, Notice, PeerAudio, PeerView, QualityMode,
+    KnockView, LeaveMode, MAX_SCREEN_VOLUME, MAX_VOLUME, MemberView, Node, NodeConfig, Notice, OnlyRelayStatus, PeerAudio,
+    PeerView, QualityMode,
     RoomView, Snapshot, Stream,
 };
 
