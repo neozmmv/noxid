@@ -49,6 +49,8 @@ export interface KnockView {
 
 export interface Snapshot {
   id: string;
+  /** What others add us by: our id and current home relay, as a code. */
+  friend_code: string;
   name: string;
   /** Our profile picture's hash. */
   avatar: string | null;

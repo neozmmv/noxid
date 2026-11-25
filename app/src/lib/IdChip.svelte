@@ -5,9 +5,9 @@
   import EyeOff from "@lucide/svelte/icons/eye-off";
   import { tooltip } from "./tooltip";
 
-  // An endpoint id, shortened to its ends, with a copy button. `masked`
-  // hides it until revealed: our own id is also our room code, so it is kept
-  // off the screen by default, as the room code is.
+  // An endpoint id or friend code, shortened to its ends, with a copy button.
+  // `masked` hides it until revealed: our friend code is also our room code,
+  // so it is kept off the screen by default, as the room code is.
   interface Props {
     id: string;
     masked?: boolean;

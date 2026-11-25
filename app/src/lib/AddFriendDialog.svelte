@@ -12,17 +12,18 @@
   let error = $state<string | null>(null);
 
   // A quick look before asking the backend, which has the final word: the
-  // 64-character hex form, base32, or a room code in base58.
+  // 64-character hex form, base32, or a code in base58, which with a custom
+  // relay's URL in it runs to a few hundred characters.
   const looksLikeId = $derived.by(() => {
     const t = text.trim();
     return (
       /^[0-9a-fA-F]{64}$/.test(t) ||
       /^[a-zA-Z2-7]{52}$/.test(t) ||
-      /^[1-9A-HJ-NP-Za-km-z]{40,46}$/.test(t)
+      /^[1-9A-HJ-NP-Za-km-z]{40,400}$/.test(t)
     );
   });
   const hint = $derived(
-    text.trim() && !looksLikeId ? "A Noxid ID is 64 letters and digits, or a room code." : null,
+    text.trim() && !looksLikeId ? "A Noxid ID is 64 letters and digits, or a friend code." : null,
   );
 
   async function submit(event: SubmitEvent) {
@@ -30,8 +31,10 @@
     error = null;
     busy = true;
     try {
-      const id = await api.checkFriendId(text);
-      await api.sendFriendRequest(id);
+      // Checked first for its error, then sent as pasted: a friend code
+      // carries their relay, which the canonical id would drop.
+      await api.checkFriendId(text);
+      await api.sendFriendRequest(text);
       showToast("Friend request sent. You'll be friends once they accept.");
       onclose();
     } catch (e) {
