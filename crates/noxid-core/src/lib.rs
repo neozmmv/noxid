@@ -2,6 +2,7 @@
 //! and the media pipeline. Kept free of Tauri so a headless node or a future
 //! relay can reuse it.
 
+mod address_book;
 mod admin;
 mod avatar;
 pub mod audio;
