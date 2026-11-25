@@ -85,6 +85,12 @@ member's, so people reach each other through it even on networks that block
 iroh's address lookup. Codes made by this version need this version or newer
 to join with.
 
+If you talk to people on a network that blocks the default relays, turn on
+**Use only this relay** in Settings, all of you. Your codes then always name
+the custom relay instead of whichever default relay is closest. Calls that
+can't go direct use that relay's bandwidth, and if it goes down Noxid says so
+rather than quietly switching back to the default relays.
+
 ## Build from source
 
 You need Rust 1.91 or newer and [Bun](https://bun.sh) 1.4 or newer. The
