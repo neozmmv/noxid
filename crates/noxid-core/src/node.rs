@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use iroh::{Endpoint, EndpointId, RelayUrl, SecretKey, endpoint::presets, protocol::Router};
+use iroh::{Endpoint, EndpointId, RelayUrl, SecretKey, Watcher, endpoint::presets, protocol::Router};
 use iroh_live::{
     Live,
     media::{frame_channel::FrameReceiver, publish::LocalBroadcast, video::Frame},
@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, oneshot, watch};
 use tracing::{info, warn};
 
+use crate::address_book::{self, AddressBook};
 use crate::admin::{self, ADMIN_ALPN, AdminHandler};
 use crate::avatar::{self, AVATAR_ALPN, AvatarHandler, Avatars};
 use crate::files::{self, FILES_ALPN, FilesHandler, TransferView, Transfers};
@@ -317,6 +318,9 @@ pub(crate) struct Inner {
     pub(crate) transfers: Transfers,
     /// The relay of our own in the endpoint's relay map, if any.
     custom_relay: CustomRelay,
+    /// Where the peers we were told about can be reached; see
+    /// [`crate::address_book`].
+    pub(crate) address_book: AddressBook,
     /// The current roster's ids, which the mesh follows.
     pub roster_tx: watch::Sender<Vec<EndpointId>>,
     /// When the host last spoke to us, for noticing it has gone quiet.
@@ -335,8 +339,12 @@ pub struct Node {
 
 impl Node {
     pub async fn spawn(config: NodeConfig) -> Result<Self> {
+        // Beside the preset's pkarr (over HTTPS) and DNS lookups and mDNS, so
+        // peers we were told about are dialed without asking any of them.
+        let address_book = AddressBook::new(config.secret_key.public());
         let builder = Endpoint::builder(presets::N0)
             .transport_config(transport_config())
+            .address_lookup(address_book.clone())
             .secret_key(config.secret_key);
         let endpoint = with_mdns(builder, LanPresence::Announce).await.bind().await?;
         let id = endpoint.id();
@@ -410,6 +418,7 @@ impl Node {
             sensitivity: audio::Sensitivity::default(),
             transfers: Transfers::default(),
             custom_relay: CustomRelay::default(),
+            address_book,
             roster_tx,
             last_heard_host: Mutex::new(Instant::now()),
             changed: watch::channel(0).0,
@@ -454,6 +463,7 @@ impl Node {
         tokio::spawn(admin::drop_absent(inner.clone()));
         tokio::spawn(avatar::run(inner.clone()));
         tokio::spawn(forward_friend_events(inner.clone()));
+        tokio::spawn(follow_home_relay(inner.clone()));
 
         // Before waiting to come online, so a home relay can be found through
         // it where n0's are blocked.
@@ -590,6 +600,8 @@ impl Node {
             let mut room = self.inner.room.lock().unwrap();
             room.create(name, &own_id, &own_name);
             room.set_avatar(&own_id, self.inner.own_avatar().as_deref());
+            let relay = self.inner.home_relay().map(|url| url.to_string());
+            room.set_relay(&own_id, relay.as_deref());
         }
         self.inner.start_local()?;
         self.inner.roster_changed(None);
@@ -604,7 +616,7 @@ impl Node {
                 .room
                 .lock()
                 .unwrap()
-                .generate_invite(self.id(), ttl, chrono::Utc::now())?;
+                .generate_invite(self.id(), self.inner.home_relay().as_ref(), ttl, chrono::Utc::now())?;
         Ok(code)
     }
 
@@ -617,8 +629,21 @@ impl Node {
         }
         self.leave().await;
 
+        if let Some(relay) = code.relay() {
+            self.inner
+                .address_book
+                .insert(code.coordinator(), relay.clone(), address_book::Source::Code);
+        }
         let own_avatar = self.inner.own_avatar();
-        let admission = admin::join(&self.inner.endpoint, code, self.inner.name(), own_avatar.clone()).await?;
+        let own_relay = self.inner.home_relay().map(|url| url.to_string());
+        let admission = admin::join(
+            &self.inner.endpoint,
+            code.clone(),
+            self.inner.name(),
+            own_avatar.clone(),
+            own_relay,
+        )
+        .await?;
         let own_id = self.id().to_string();
         {
             let mut room = self.inner.room.lock().unwrap();
@@ -1068,6 +1093,42 @@ async fn forward_friend_events(inner: Arc<Inner>) {
     }
 }
 
+/// Keeps the room up to date with our home relay, which changes when the
+/// network does or a custom relay comes or goes: as host, in our own roster
+/// entry and room code; as a member, by telling the host, who passes it on.
+async fn follow_home_relay(inner: Arc<Inner>) {
+    let mut watcher = inner.endpoint.watch_addr();
+    let mut last = inner.home_relay();
+    while let Ok(addr) = watcher.updated().await {
+        let relay = addr.relay_urls().next().cloned();
+        if relay == last {
+            continue;
+        }
+        info!(relay = ?relay.as_ref().map(ToString::to_string), "home relay changed");
+        last = relay.clone();
+        let own_id = inner.own_id().to_string();
+        let relay = relay.map(|url| url.to_string());
+        let (active, is_host, coordinator) = {
+            let room = inner.room.lock().unwrap();
+            (room.is_active(), room.is_coordinator(&own_id), room.coordinator_id.clone())
+        };
+        if !active {
+            continue;
+        }
+        if is_host {
+            inner.room.lock().unwrap().set_relay(&own_id, relay.as_deref());
+            inner.roster_changed(None);
+        } else if let Some(coordinator) = coordinator.and_then(|c| c.parse().ok()) {
+            let endpoint = inner.endpoint.clone();
+            tokio::spawn(async move {
+                if let Err(e) = admin::notify_relay(&endpoint, coordinator, relay).await {
+                    tracing::debug!("could not tell the host our new relay: {e:#}");
+                }
+            });
+        }
+    }
+}
+
 /// Runs futures concurrently and waits for all of them, without pulling in a
 /// futures crate for one call site.
 async fn join_all<F: std::future::Future<Output = ()> + Send + 'static>(
@@ -1186,6 +1247,11 @@ impl Inner {
         self.changed.subscribe()
     }
 
+    /// Our home relay right now, if we have one yet.
+    pub fn home_relay(&self) -> Option<RelayUrl> {
+        self.endpoint.addr().relay_urls().next().cloned()
+    }
+
     pub fn own_avatar(&self) -> Option<String> {
         self.avatar.lock().unwrap().clone()
     }
@@ -1211,10 +1277,14 @@ impl Inner {
     /// redraws, and on the coordinator every member hears about it (except
     /// `subject`, who learned the outcome from the reply that caused it).
     pub fn roster_changed(&self, subject: Option<&str>) {
-        let (ids, is_coordinator) = {
+        let (ids, relays, is_coordinator) = {
             let room = self.room.lock().unwrap();
-            (room.member_ids(), room.is_coordinator(&self.own_id().to_string()))
+            (room.member_ids(), room.relays(), room.is_coordinator(&self.own_id().to_string()))
         };
+        // Before the mesh hears of anyone new, so it dials them with this.
+        for (id, relay) in relays {
+            self.address_book.insert(id, relay, address_book::Source::Roster);
+        }
         self.roster_tx.send_replace(ids);
         if is_coordinator {
             admin::broadcast_roster(self, subject);
@@ -1428,11 +1498,11 @@ impl Inner {
             RoomView {
                 name: room.name.clone(),
                 is_coordinator,
-                room_code: is_coordinator.then(|| room::room_code(&own_id)),
+                room_code: is_coordinator.then(|| room::room_code(&own_id, self.home_relay().as_ref())),
                 members: room
                     .roster()
                     .into_iter()
-                    .map(|Member { id, name, avatar }| {
+                    .map(|Member { id, name, avatar, .. }| {
                         let parsed: Option<EndpointId> = id.parse().ok();
                         let mut peer = parsed
                             .and_then(|p| peers.get(&p).cloned())

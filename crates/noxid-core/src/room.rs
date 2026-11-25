@@ -5,10 +5,10 @@
 //!
 //! - The node that creates a room is its coordinator. It alone admits members
 //!   and pushes the roster to everyone else.
-//! - An invite is single-use and expires. The code carries the coordinator's id
-//!   and a random token, nothing else; which room the token is good for and
-//!   until when are recorded only on the coordinator, which is the only party
-//!   that checks them.
+//! - An invite is single-use and expires. The code carries the coordinator's id,
+//!   its home relay and a random token, nothing else; which room the token is
+//!   good for and until when are recorded only on the coordinator, which is
+//!   the only party that checks them.
 //! - `room_id` names one room apart from the next even when the same node
 //!   creates both, so a token from an earlier room never admits anyone to a
 //!   later one. It never goes on the wire.
@@ -17,7 +17,7 @@
 //!
 //! - Hostnames, DNS bindings and the name-pinning rules are gone. A member has a
 //!   display name, which is a label for humans and grants nothing.
-//! - A second way in: knocking. A room code (the coordinator's id alone) lets
+//! - A second way in: knocking. A room code (the coordinator's id and relay) lets
 //!   someone ask to join, and the coordinator approves or denies them live.
 //! - Redeeming an invite is idempotent for the same requester while the invite's
 //!   window is open. In Quix a retried join whose first reply was lost found its
@@ -30,7 +30,7 @@ use std::collections::HashMap;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Utc};
-use iroh::EndpointId;
+use iroh::{EndpointId, RelayUrl};
 use serde::{Deserialize, Serialize};
 
 /// How long an invite stays redeemable when nothing else is asked for.
@@ -54,6 +54,10 @@ pub struct Member {
     /// `avatar`). Left out by versions without pictures, so it defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avatar: Option<String>,
+    /// Their home relay as they last told the coordinator, so members can
+    /// dial each other without looking it up. Left out by older versions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay: Option<String>,
 }
 
 impl Member {
@@ -62,6 +66,7 @@ impl Member {
             id: id.into(),
             name: name.into(),
             avatar: None,
+            relay: None,
         }
     }
 }
@@ -91,48 +96,217 @@ pub fn short_id(id: &str) -> String {
 }
 
 /// What a code someone pasted turned out to be.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Two formats are read:
+///
+/// - Version 0, told apart by length: an invite is the coordinator's 32-byte
+///   id followed by a 16-byte token, and a room code is the id alone. Nothing
+///   says where the coordinator is, so joining depends on looking it up.
+/// - Version 1, which starts with its version byte and also carries the
+///   coordinator's home relay, so a joiner can dial it without any lookup.
+///   Direct addresses are left out: they say where someone's PC is, and go
+///   stale long before a code does.
+///
+/// Version 1 is laid out as
+/// `[1] [kind] [id: 32] [relay tag] [relay..] [token: 16, invites only] [pad]`.
+/// The relay is nothing (tag 0), one of n0's by its index in [`N0_RELAYS`]
+/// (tag 1, one byte), or any other URL (tag 2, a length byte, the URL). One
+/// zero byte is padded on in the single case where the code would otherwise
+/// be 48 bytes long and read as a version 0 invite.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Code {
     /// A single-use invite: admitted without asking anyone.
-    Invite { coordinator: EndpointId, token: [u8; 16] },
+    Invite {
+        coordinator: EndpointId,
+        relay: Option<RelayUrl>,
+        token: [u8; 16],
+    },
     /// A room code: knock, and wait for the coordinator to let us in.
-    Knock { coordinator: EndpointId },
+    Knock {
+        coordinator: EndpointId,
+        relay: Option<RelayUrl>,
+    },
+}
+
+/// The version byte of codes that carry the coordinator's relay.
+const CODE_V1: u8 = 1;
+const KIND_KNOCK: u8 = 0;
+const KIND_INVITE: u8 = 1;
+const RELAY_NONE: u8 = 0;
+const RELAY_N0: u8 = 1;
+const RELAY_URL: u8 = 2;
+/// The shortest version 1 code: a knock with no relay.
+const MIN_V1_LEN: usize = 1 + 1 + 32 + 1;
+/// The lengths of version 0 codes, which a version 1 code never has.
+const V0_INVITE_LEN: usize = 48;
+const V0_KNOCK_LEN: usize = 32;
+
+const UPDATE_NOXID: &str = "this code was made by a newer version of Noxid; update Noxid to use it";
+
+/// n0's relays, which a code names by index to stay short. Part of the code
+/// format: entries are only ever appended, never reordered or removed. A relay
+/// missing here still works; it is just written out in full.
+pub const N0_RELAYS: [&str; 4] = [
+    "https://use1-1.relay.n0.iroh.link.",
+    "https://usw1-1.relay.n0.iroh.link.",
+    "https://euc1-1.relay.n0.iroh.link.",
+    "https://aps1-1.relay.n0.iroh.link.",
+];
+
+fn n0_relay(index: u8) -> Option<RelayUrl> {
+    N0_RELAYS.get(usize::from(index))?.parse().ok()
+}
+
+fn n0_index(relay: &RelayUrl) -> Option<u8> {
+    N0_RELAYS
+        .iter()
+        .position(|url| url.parse::<RelayUrl>().is_ok_and(|url| url == *relay))
+        .and_then(|i| u8::try_from(i).ok())
+}
+
+/// Reads a version 1 code front to back.
+struct Reader<'a>(&'a [u8]);
+
+impl<'a> Reader<'a> {
+    fn take(&mut self, n: usize) -> Result<&'a [u8]> {
+        anyhow::ensure!(self.0.len() >= n, "not a valid code (cut short)");
+        let (head, tail) = self.0.split_at(n);
+        self.0 = tail;
+        Ok(head)
+    }
+
+    fn byte(&mut self) -> Result<u8> {
+        Ok(self.take(1)?[0])
+    }
 }
 
 impl Code {
-    /// Decodes either kind. They are told apart by length: an invite is the
-    /// coordinator's 32-byte id followed by a 16-byte token, and a room code is
-    /// the id alone.
+    /// Decodes either kind, in either format. Version 0 codes are recognized
+    /// by their length alone, which no version 1 code has.
     pub fn decode(code: &str) -> Result<Self> {
         let bytes = bs58::decode(code.trim())
             .into_vec()
             .context("not a valid code")?;
-        let id = |bytes: &[u8]| -> Result<EndpointId> {
-            let array: [u8; 32] = bytes.try_into().expect("length checked");
-            EndpointId::from_bytes(&array).context("code names an invalid endpoint")
-        };
         match bytes.len() {
-            48 => Ok(Code::Invite {
-                coordinator: id(&bytes[..32])?,
+            V0_INVITE_LEN => Ok(Code::Invite {
+                coordinator: endpoint_id(&bytes[..32])?,
+                relay: None,
                 token: bytes[32..].try_into().expect("length checked"),
             }),
-            32 => Ok(Code::Knock {
-                coordinator: id(&bytes)?,
+            V0_KNOCK_LEN => Ok(Code::Knock {
+                coordinator: endpoint_id(&bytes)?,
+                relay: None,
             }),
-            _ => anyhow::bail!("not a valid code (wrong length)"),
+            n if n < MIN_V1_LEN => anyhow::bail!("not a valid code (wrong length)"),
+            _ if bytes[0] == CODE_V1 => Self::decode_v1(&bytes),
+            _ => anyhow::bail!(UPDATE_NOXID),
         }
+    }
+
+    fn decode_v1(bytes: &[u8]) -> Result<Self> {
+        let mut reader = Reader(&bytes[1..]);
+        let kind = reader.byte()?;
+        if kind != KIND_KNOCK && kind != KIND_INVITE {
+            anyhow::bail!(UPDATE_NOXID);
+        }
+        let coordinator = endpoint_id(reader.take(32)?)?;
+        let relay = match reader.byte()? {
+            RELAY_NONE => None,
+            // An index added in a later version: dial by id alone, as before.
+            RELAY_N0 => n0_relay(reader.byte()?),
+            RELAY_URL => {
+                let len = usize::from(reader.byte()?);
+                let text = std::str::from_utf8(reader.take(len)?).context("not a valid code (relay)")?;
+                Some(text.parse().context("not a valid code (relay)")?)
+            }
+            _ => anyhow::bail!(UPDATE_NOXID),
+        };
+        let code = if kind == KIND_INVITE {
+            Code::Invite {
+                coordinator,
+                relay,
+                token: reader.take(16)?.try_into().expect("length checked"),
+            }
+        } else {
+            Code::Knock { coordinator, relay }
+        };
+        // The one zero byte `encode` adds to keep clear of the version 0 length.
+        let padded = bytes.len() == V0_INVITE_LEN + 1 && reader.0 == [0];
+        anyhow::ensure!(reader.0.is_empty() || padded, "not a valid code (trailing bytes)");
+        Ok(code)
+    }
+
+    /// Writes the code out in the current format, version 1.
+    pub fn encode(&self) -> String {
+        let (kind, coordinator, relay, token) = match self {
+            Code::Invite {
+                coordinator,
+                relay,
+                token,
+            } => (KIND_INVITE, coordinator, relay, Some(token)),
+            Code::Knock { coordinator, relay } => (KIND_KNOCK, coordinator, relay, None),
+        };
+        let mut blob = Vec::with_capacity(64);
+        blob.extend_from_slice(&[CODE_V1, kind]);
+        blob.extend_from_slice(coordinator.as_bytes());
+        let url = relay.as_ref().map(ToString::to_string);
+        match (relay.as_ref().and_then(n0_index), url) {
+            (Some(index), _) => blob.extend_from_slice(&[RELAY_N0, index]),
+            (None, Some(url)) => match u8::try_from(url.len()) {
+                Ok(len) => {
+                    blob.extend_from_slice(&[RELAY_URL, len]);
+                    blob.extend_from_slice(url.as_bytes());
+                }
+                Err(_) => {
+                    tracing::warn!(%url, "relay URL too long for a code; leaving it out");
+                    blob.push(RELAY_NONE);
+                }
+            },
+            (None, None) => blob.push(RELAY_NONE),
+        }
+        if let Some(token) = token {
+            blob.extend_from_slice(token);
+        }
+        // Read back as a version 0 invite otherwise; see `decode_v1`.
+        if blob.len() == V0_INVITE_LEN {
+            blob.push(0);
+        }
+        bs58::encode(blob).into_string()
     }
 
     pub fn coordinator(&self) -> EndpointId {
         match self {
-            Code::Invite { coordinator, .. } | Code::Knock { coordinator } => *coordinator,
+            Code::Invite { coordinator, .. } | Code::Knock { coordinator, .. } => *coordinator,
+        }
+    }
+
+    /// The coordinator's home relay when the code was made, if it says.
+    pub fn relay(&self) -> Option<&RelayUrl> {
+        match self {
+            Code::Invite { relay, .. } | Code::Knock { relay, .. } => relay.as_ref(),
         }
     }
 }
 
-/// The code anyone can use to knock on a room this node coordinates.
-pub fn room_code(coordinator: &EndpointId) -> String {
-    bs58::encode(coordinator.as_bytes()).into_string()
+fn endpoint_id(bytes: &[u8]) -> Result<EndpointId> {
+    let array: [u8; 32] = bytes.try_into().expect("length checked");
+    EndpointId::from_bytes(&array).context("code names an invalid endpoint")
+}
+
+/// The code anyone can use to knock on a room this node coordinates, naming
+/// its home relay when it has one.
+pub fn room_code(coordinator: &EndpointId, relay: Option<&RelayUrl>) -> String {
+    Code::Knock {
+        coordinator: *coordinator,
+        relay: relay.cloned(),
+    }
+    .encode()
+}
+
+/// Reads a relay URL from a roster or a request. Anything but a well-formed
+/// https URL counts as none, so a bad entry never sends anyone anywhere odd.
+pub fn parse_relay(text: &str) -> Option<RelayUrl> {
+    crate::relay::parse(text).ok()
 }
 
 /// An outstanding invite, and the two things that decide whether it still counts.
@@ -193,6 +367,7 @@ impl Room {
     pub fn generate_invite(
         &mut self,
         own_id: EndpointId,
+        own_relay: Option<&RelayUrl>,
         ttl: Duration,
         now: DateTime<Utc>,
     ) -> Result<(String, DateTime<Utc>)> {
@@ -208,10 +383,12 @@ impl Room {
         self.pending_invites
             .insert(token, PendingInvite { room_id, expires_at });
 
-        let mut blob = Vec::with_capacity(48);
-        blob.extend_from_slice(own_id.as_bytes());
-        blob.extend_from_slice(&token);
-        Ok((bs58::encode(blob).into_string(), expires_at))
+        let code = Code::Invite {
+            coordinator: own_id,
+            relay: own_relay.cloned(),
+            token,
+        };
+        Ok((code.encode(), expires_at))
     }
 
     fn prune_expired(&mut self, now: DateTime<Utc>) {
@@ -285,6 +462,22 @@ impl Room {
         }
     }
 
+    /// Sets a listed member's home relay. Anything but a well-formed https
+    /// URL counts as none.
+    pub fn set_relay(&mut self, id: &str, relay: Option<&str>) {
+        if let Some(member) = self.members.iter_mut().find(|m| m.id == id) {
+            member.relay = relay.and_then(parse_relay).map(|url| url.to_string());
+        }
+    }
+
+    /// Every member's home relay that we know, as endpoint ids.
+    pub fn relays(&self) -> Vec<(EndpointId, RelayUrl)> {
+        self.members
+            .iter()
+            .filter_map(|m| Some((m.id.parse().ok()?, parse_relay(m.relay.as_deref()?)?)))
+            .collect()
+    }
+
     /// Records the room we were admitted to, with the roster the coordinator
     /// handed back. Without that roster a joiner would only trust the
     /// coordinator, and members would reject each other.
@@ -316,8 +509,10 @@ impl Room {
             if !self.is_member(&member.id) {
                 let name = display_name(&member.name, &member.id);
                 let avatar = member.avatar.filter(|a| crate::avatar::is_hash(a));
+                let relay = member.relay.as_deref().and_then(parse_relay).map(|url| url.to_string());
                 self.members.push(Member {
                     avatar,
+                    relay,
                     ..Member::new(member.id, name)
                 });
             }
@@ -473,7 +668,7 @@ mod tests {
     fn with_invite(ttl: Duration) -> (Room, [u8; 16]) {
         let mut room = Room::default();
         room.create(Some("room".into()), &id(1), "host");
-        let (code, _) = room.generate_invite(key(1), ttl, minted_at()).unwrap();
+        let (code, _) = room.generate_invite(key(1), None, ttl, minted_at()).unwrap();
         (room, token_of(&code))
     }
 
@@ -482,7 +677,7 @@ mod tests {
         let mut room = Room::default();
         room.create(None, &id(1), "host");
         let (code, expires_at) = room
-            .generate_invite(key(1), Duration::minutes(5), minted_at())
+            .generate_invite(key(1), None, Duration::minutes(5), minted_at())
             .unwrap();
 
         let decoded = Code::decode(&code).unwrap();
@@ -495,18 +690,192 @@ mod tests {
     #[test]
     fn room_codes_and_invites_are_told_apart() {
         assert_eq!(
-            Code::decode(&room_code(&key(1))).unwrap(),
-            Code::Knock { coordinator: key(1) }
+            Code::decode(&room_code(&key(1), None)).unwrap(),
+            Code::Knock {
+                coordinator: key(1),
+                relay: None
+            }
         );
         assert!(Code::decode("not-base58!").is_err());
         assert!(Code::decode("abc").is_err(), "too short");
+    }
+
+    // ------------------------------------------------------------ code format
+
+    fn relay(url: &str) -> RelayUrl {
+        url.parse().unwrap()
+    }
+
+    fn raw(code: &str) -> Vec<u8> {
+        bs58::decode(code).into_vec().unwrap()
+    }
+
+    #[test]
+    fn version_0_codes_still_decode() {
+        let token = [7u8; 16];
+        let mut invite = key(1).as_bytes().to_vec();
+        invite.extend_from_slice(&token);
+        let invite = bs58::encode(invite).into_string();
+        let knock = bs58::encode(key(1).as_bytes()).into_string();
+
+        assert_eq!(
+            Code::decode(&invite).unwrap(),
+            Code::Invite {
+                coordinator: key(1),
+                relay: None,
+                token
+            }
+        );
+        assert_eq!(
+            Code::decode(&knock).unwrap(),
+            Code::Knock {
+                coordinator: key(1),
+                relay: None
+            }
+        );
+    }
+
+    #[test]
+    fn n0_relays_are_written_as_an_index() {
+        for (index, url) in N0_RELAYS.iter().enumerate() {
+            let code = Code::Invite {
+                coordinator: key(1),
+                relay: Some(relay(url)),
+                token: [3; 16],
+            };
+            let encoded = code.encode();
+            let bytes = raw(&encoded);
+            assert_eq!(bytes[0], CODE_V1);
+            assert_eq!(&bytes[34..36], &[RELAY_N0, index as u8]);
+            assert_eq!(bytes.len(), 52, "two bytes for the relay");
+            assert_eq!(Code::decode(&encoded).unwrap(), code);
+        }
+        let knock = Code::Knock {
+            coordinator: key(2),
+            relay: Some(relay(N0_RELAYS[2])),
+        };
+        assert_eq!(Code::decode(&knock.encode()).unwrap(), knock);
+    }
+
+    #[test]
+    fn every_relay_iroh_defaults_to_has_an_index() {
+        // A new n0 relay would only make codes longer, but it should be noticed.
+        for url in iroh::defaults::prod::default_relay_map().urls::<Vec<RelayUrl>>() {
+            assert!(n0_index(&url).is_some(), "{url} has no index");
+        }
+    }
+
+    #[test]
+    fn custom_relays_are_written_out_in_full() {
+        let custom = relay("https://relay.neozmmv.dev");
+        let invite = Code::Invite {
+            coordinator: key(1),
+            relay: Some(custom.clone()),
+            token: [9; 16],
+        };
+        let knock = Code::Knock {
+            coordinator: key(1),
+            relay: Some(custom.clone()),
+        };
+        assert_eq!(Code::decode(&invite.encode()).unwrap(), invite);
+        assert_eq!(Code::decode(&knock.encode()).unwrap(), knock);
+        assert_eq!(Code::decode(&knock.encode()).unwrap().relay(), Some(&custom));
+    }
+
+    #[test]
+    fn a_code_without_a_relay_round_trips() {
+        let knock = Code::Knock {
+            coordinator: key(1),
+            relay: None,
+        };
+        assert_eq!(raw(&knock.encode()).len(), MIN_V1_LEN);
+        assert_eq!(Code::decode(&knock.encode()).unwrap(), knock);
+    }
+
+    #[test]
+    fn a_new_code_never_reads_as_an_old_invite() {
+        // 1 + 1 + 32 + 2 + 12 = 48: a twelve-character URL would make a knock
+        // exactly as long as a version 0 invite, without the pad.
+        let short = relay("https://a.b");
+        assert_eq!(short.to_string().len(), 12, "{short}");
+        let knock = Code::Knock {
+            coordinator: key(1),
+            relay: Some(short),
+        };
+        assert_eq!(raw(&knock.encode()).len(), V0_INVITE_LEN + 1);
+        assert_eq!(Code::decode(&knock.encode()).unwrap(), knock);
+    }
+
+    #[test]
+    fn unknown_versions_say_to_update() {
+        let mut bytes = raw(&room_code(&key(1), Some(&relay(N0_RELAYS[0]))));
+        bytes[0] = 2;
+        let err = Code::decode(&bs58::encode(bytes).into_string()).unwrap_err();
+        assert!(err.to_string().contains("update Noxid"), "{err}");
+    }
+
+    #[test]
+    fn broken_version_1_codes_are_refused() {
+        let encoded = Code::Invite {
+            coordinator: key(1),
+            relay: Some(relay("https://relay.example.com")),
+            token: [1; 16],
+        }
+        .encode();
+        let bytes = raw(&encoded);
+
+        let cut = bs58::encode(&bytes[..bytes.len() - 1]).into_string();
+        assert!(Code::decode(&cut).is_err(), "cut short");
+        let mut longer = bytes.clone();
+        longer.push(0);
+        assert!(Code::decode(&bs58::encode(longer).into_string()).is_err(), "trailing bytes");
+    }
+
+    #[test]
+    fn invites_name_the_relay_they_were_minted_with() {
+        let mut room = Room::default();
+        room.create(None, &id(1), "host");
+        let own = relay(N0_RELAYS[1]);
+        let (code, _) = room
+            .generate_invite(key(1), Some(&own), Duration::minutes(5), minted_at())
+            .unwrap();
+        let decoded = Code::decode(&code).unwrap();
+        assert_eq!(decoded.relay(), Some(&own));
+        assert!(room.redeem_invite(&token_of(&code), &id(2), "ana", minted_at()));
+    }
+
+    #[test]
+    fn a_roster_keeps_relays_but_only_https_ones() {
+        let mut room = Room::default();
+        room.set_joined(&id(1), &id(2), "me", None, vec![]);
+        let with = |n: u8, relay: &str| Member {
+            relay: Some(relay.to_string()),
+            ..Member::new(id(n), "x")
+        };
+
+        room.set_roster(
+            &id(2),
+            "me",
+            None,
+            vec![with(3, "https://relay.example.com"), with(4, "http://10.0.0.1"), with(5, "nonsense")],
+        );
+
+        assert_eq!(room.relays(), vec![(key(3), relay("https://relay.example.com"))]);
+    }
+
+    #[test]
+    fn members_without_relays_read_as_before() {
+        let old: Member = serde_json::from_str(&format!(r#"{{"id":"{}","name":"ana"}}"#, id(2))).unwrap();
+        assert_eq!(old.relay, None);
+        let json = serde_json::to_string(&Member::new(id(2), "ana")).unwrap();
+        assert!(!json.contains("relay"), "{json}");
     }
 
     #[test]
     fn only_a_coordinator_mints_invites() {
         let mut room = Room::default();
         room.set_joined(&id(1), &id(2), "me", None, vec![]);
-        assert!(room.generate_invite(key(2), Duration::minutes(5), minted_at()).is_err());
+        assert!(room.generate_invite(key(2), None, Duration::minutes(5), minted_at()).is_err());
     }
 
     #[test]
@@ -577,7 +946,7 @@ mod tests {
         let mut room = Room::default();
         room.create(None, &id(1), "host");
         let (_, expires_at) = room
-            .generate_invite(key(1), Duration::days(365), minted_at())
+            .generate_invite(key(1), None, Duration::days(365), minted_at())
             .unwrap();
         assert_eq!(expires_at, minted_at() + MAX_INVITE_TTL);
     }
@@ -747,13 +1116,13 @@ mod tests {
         assert!(member.is_coordinator(&id(2)));
         assert_eq!(ids(&member), vec![id(2), id(3)]);
         assert_eq!(member.name.as_deref(), Some("room"));
-        assert!(member.generate_invite(key(2), DEFAULT_INVITE_TTL, minted_at()).is_ok());
+        assert!(member.generate_invite(key(2), None, DEFAULT_INVITE_TTL, minted_at()).is_ok());
     }
 
     #[test]
     fn the_old_hosts_invites_do_not_work_for_the_new_one() {
         let mut host = host_with(&[2]);
-        let (code, _) = host.generate_invite(key(1), DEFAULT_INVITE_TTL, minted_at()).unwrap();
+        let (code, _) = host.generate_invite(key(1), None, DEFAULT_INVITE_TTL, minted_at()).unwrap();
         let mut member = Room::default();
         member.set_joined(&id(1), &id(2), "m2", None, host.roster());
         member.promote(&id(2), "m2", None, vec![Member::new(id(2), "m2")]);

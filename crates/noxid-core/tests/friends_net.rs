@@ -133,7 +133,7 @@ fn invite_from(coordinator: &SecretKey) -> String {
     let mut room = noxid_core::room::Room::default();
     let id = coordinator.public();
     room.create(None, &id.to_string(), "host");
-    room.generate_invite(id, chrono::Duration::minutes(1), chrono::Utc::now())
+    room.generate_invite(id, None, chrono::Duration::minutes(1), chrono::Utc::now())
         .unwrap()
         .0
 }
@@ -309,7 +309,7 @@ async fn ids_are_parsed_from_hex_or_a_room_code_and_checked() {
     let own = SecretKey::from_bytes(&[1; 32]).public();
     let other = SecretKey::from_bytes(&[2; 32]).public();
     assert_eq!(parse_friend_id(&other.to_string(), own).unwrap(), other);
-    assert_eq!(parse_friend_id(&noxid_core::room::room_code(&other), own).unwrap(), other);
+    assert_eq!(parse_friend_id(&noxid_core::room::room_code(&other, None), own).unwrap(), other);
     assert!(parse_friend_id(&own.to_string(), own).is_err(), "not ourselves");
     assert!(parse_friend_id("hello", own).is_err());
     let invite = invite_from(&SecretKey::from_bytes(&[2; 32]));

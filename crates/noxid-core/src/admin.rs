@@ -17,9 +17,10 @@ use iroh::{Endpoint, EndpointId};
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
+use crate::address_book::Source;
 use crate::node::{Inner, Notice};
 use crate::rpc;
-use crate::room::{Code, Member};
+use crate::room::{Code, Member, Room, parse_relay};
 
 pub const ADMIN_ALPN: &[u8] = b"noxid-admin/0";
 
@@ -80,6 +81,10 @@ pub enum AdminRequest {
         /// Their picture's hash; older versions send none.
         #[serde(default)]
         avatar: Option<String>,
+        /// Their home relay, which goes on the roster so the other members
+        /// can dial them without a lookup. Older versions send none.
+        #[serde(default)]
+        relay: Option<String>,
     },
     /// Joiner to coordinator: ask to be let in. The reply comes once the
     /// coordinator decides, or the knock times out.
@@ -87,9 +92,17 @@ pub enum AdminRequest {
         name: String,
         #[serde(default)]
         avatar: Option<String>,
+        #[serde(default)]
+        relay: Option<String>,
     },
     /// Member to coordinator: take me off the roster.
     Leave,
+    /// Member to coordinator: my home relay changed. Older coordinators do not
+    /// know it and answer with an error, which costs nothing.
+    Address {
+        #[serde(default)]
+        relay: Option<String>,
+    },
     /// Coordinator to member: the roster changed, here it is.
     Roster {
         room_name: Option<String>,
@@ -160,9 +173,11 @@ impl AdminHandler {
                 token_hex,
                 name,
                 avatar,
-            } => self.join(&token_hex, &name, avatar.as_deref(), requester),
-            AdminRequest::Knock { name, avatar } => self.knock(name, avatar, requester).await,
+                relay,
+            } => self.join(&token_hex, &name, avatar.as_deref(), relay.as_deref(), requester),
+            AdminRequest::Knock { name, avatar, relay } => self.knock(name, avatar, relay, requester).await,
             AdminRequest::Leave => self.leave(requester),
+            AdminRequest::Address { relay } => self.address(relay.as_deref(), requester),
             AdminRequest::Roster { room_name, members } => {
                 self.roster(room_name, members, requester)
             }
@@ -235,7 +250,28 @@ impl AdminHandler {
         }
     }
 
-    fn join(&self, token_hex: &str, name: &str, avatar: Option<&str>, requester: &str) -> AdminResponse {
+    /// Coordinator: puts what a member told us about itself on the roster,
+    /// and its relay in our address book.
+    fn note_member(&self, room: &mut Room, requester: &str, avatar: Option<&str>, relay: Option<&str>) {
+        room.set_avatar(requester, avatar);
+        room.set_relay(requester, relay);
+        self.learn_relay(requester, relay);
+    }
+
+    fn learn_relay(&self, requester: &str, relay: Option<&str>) {
+        if let (Ok(id), Some(relay)) = (requester.parse(), relay.and_then(parse_relay)) {
+            self.inner.address_book.insert(id, relay, Source::Member);
+        }
+    }
+
+    fn join(
+        &self,
+        token_hex: &str,
+        name: &str,
+        avatar: Option<&str>,
+        relay: Option<&str>,
+        requester: &str,
+    ) -> AdminResponse {
         let Ok(Ok(token)) = hex::decode(token_hex).map(<[u8; 16]>::try_from) else {
             return error("invalid token");
         };
@@ -243,7 +279,7 @@ impl AdminHandler {
             let mut room = self.inner.room.lock().unwrap();
             let admitted = room.redeem_invite(&token, requester, name, chrono::Utc::now());
             if admitted {
-                room.set_avatar(requester, avatar);
+                self.note_member(&mut room, requester, avatar, relay);
             }
             admitted
         };
@@ -258,7 +294,13 @@ impl AdminHandler {
         self.admitted()
     }
 
-    async fn knock(&self, name: String, avatar: Option<String>, requester: &str) -> AdminResponse {
+    async fn knock(
+        &self,
+        name: String,
+        avatar: Option<String>,
+        relay: Option<String>,
+        requester: &str,
+    ) -> AdminResponse {
         if !self.is_coordinator() {
             return AdminResponse::Denied {
                 message: "this room is not open".to_string(),
@@ -271,7 +313,7 @@ impl AdminHandler {
             {
                 let mut room = self.inner.room.lock().unwrap();
                 room.admit(requester, &name);
-                room.set_avatar(requester, avatar.as_deref());
+                self.note_member(&mut room, requester, avatar.as_deref(), relay.as_deref());
             }
             self.inner.roster_changed(Some(requester));
             return self.admitted();
@@ -306,7 +348,7 @@ impl AdminHandler {
         {
             let mut room = self.inner.room.lock().unwrap();
             room.admit(requester, &name);
-            room.set_avatar(requester, avatar.as_deref());
+            self.note_member(&mut room, requester, avatar.as_deref(), relay.as_deref());
         }
         info!(%requester, %name, "let in");
         self.inner.roster_changed(Some(requester));
@@ -320,6 +362,28 @@ impl AdminHandler {
         let removed = self.inner.room.lock().unwrap().remove_member(requester);
         if removed {
             info!(%requester, "left");
+            self.inner.roster_changed(Some(requester));
+        }
+        AdminResponse::Ack
+    }
+
+    /// A member's home relay changed: the roster carries the new one to
+    /// everyone else.
+    fn address(&self, relay: Option<&str>, requester: &str) -> AdminResponse {
+        if !self.is_coordinator() {
+            return error("only the coordinator keeps the roster");
+        }
+        let changed = {
+            let mut room = self.inner.room.lock().unwrap();
+            if !room.is_member(requester) {
+                return error("not in this room");
+            }
+            let before = room.roster();
+            room.set_relay(requester, relay);
+            room.roster() != before
+        };
+        self.learn_relay(requester, relay);
+        if changed {
             self.inner.roster_changed(Some(requester));
         }
         AdminResponse::Ack
@@ -517,21 +581,22 @@ pub(crate) async fn join(
     code: Code,
     name: String,
     avatar: Option<String>,
+    relay: Option<String>,
 ) -> Result<Admission> {
     let response = match code {
-        Code::Knock { coordinator } => {
+        Code::Knock { coordinator, .. } => {
             // A little longer than the coordinator waits, so its "nobody
             // answered" arrives rather than our own timeout.
             call(
                 endpoint,
                 coordinator,
-                AdminRequest::Knock { name, avatar },
+                AdminRequest::Knock { name, avatar, relay },
                 KNOCK_TIMEOUT + Duration::from_secs(10),
             )
             .await
             .context("could not reach the room's host; is it online?")?
         }
-        Code::Invite { coordinator, token } => {
+        Code::Invite { coordinator, token, .. } => {
             let mut last_error = None;
             let mut response = None;
             for attempt in 0..JOIN_ATTEMPTS {
@@ -542,6 +607,7 @@ pub(crate) async fn join(
                     token_hex: hex::encode(token),
                     name: name.clone(),
                     avatar: avatar.clone(),
+                    relay: relay.clone(),
                 };
                 match call(endpoint, coordinator, request, CALL_TIMEOUT).await {
                     Ok(r) => {
@@ -653,6 +719,11 @@ async fn join_all_bounded<F: std::future::Future<Output = ()> + Send + 'static>(
         }
     })
     .await;
+}
+
+/// Member: tells the coordinator our home relay changed.
+pub(crate) async fn notify_relay(endpoint: &Endpoint, coordinator: EndpointId, relay: Option<String>) -> Result<()> {
+    expect_ack(call(endpoint, coordinator, AdminRequest::Address { relay }, CALL_TIMEOUT).await)
 }
 
 pub(crate) async fn notify_leave(endpoint: &Endpoint, coordinator: EndpointId) -> Result<()> {

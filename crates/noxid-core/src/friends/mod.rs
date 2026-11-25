@@ -146,7 +146,7 @@ pub fn parse_friend_id(text: &str, own: EndpointId) -> Result<EndpointId> {
     let id = match text.parse::<EndpointId>() {
         Ok(id) => id,
         Err(_) => match Code::decode(text) {
-            Ok(Code::Knock { coordinator }) => coordinator,
+            Ok(Code::Knock { coordinator, .. }) => coordinator,
             Ok(Code::Invite { .. }) => bail!("that's a room invite, not a Noxid ID"),
             Err(_) => bail!("that's not a Noxid ID"),
         },
